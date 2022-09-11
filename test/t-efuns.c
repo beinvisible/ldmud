@@ -20,6 +20,11 @@ struct test_struct
     int* arg;
 };
 
+struct derived_struct (test_struct)
+{
+    string* values;
+};
+
 mapping json_testdata = ([ "test 1": 42, "test 2": 42.0,
                           "test 3": "hello world\n",
                           "test 4": ({1,2,3,4,5,42.0,"teststring"}),
@@ -254,13 +259,58 @@ mixed *tests = ({
     }),
     ({ "clone_object 2", 0,
         (:
-            /* Check that our arguments went into the new object. */
-            set_driver_hook(H_CREATE_CLONE, unbound_lambda(({'ob, 'arg1, 'arg2}), ({#'call_other, 'ob, "create_clone", 'arg1, 20})));
+            /* Check that the hook lambda is bound correctly and
+             * our arguments went into the new object.
+             */
+            set_driver_hook(H_CREATE_CLONE, unbound_lambda(({'ob, 'arg1, 'arg2}), ({#'&&,
+                ({#'==, ({#'this_object}), this_object()}),
+                ({#'call_other, 'ob, "create_clone", 'arg1, 20})})));
 
             object o = clone_object(this_object(), 42, 10);
             mixed res = o->get_args();
             destruct(o);
             return res == 62;
+        :)
+    }),
+    ({ "clone_object 3", 0,
+        (:
+            /* Check that the hook lambda is bound correctly. */
+            closure cl;
+            set_driver_hook(H_CREATE_CLONE, cl=unbound_lambda(0,
+                ({#'call_other, ({#'this_object}), "create_clone", 42, 30})));
+
+            object o = clone_object(this_object());
+            mixed res = o->get_args();
+            destruct(o);
+            return res == 72;
+        :)
+    }),
+    ({ "clone_object 4", 0,
+        (:
+            /* Check that the lambda is not rebound. */
+            set_driver_hook(H_CREATE_CLONE, lambda(0, ({#'&&,
+                ({#'!=, ({#'this_object}), this_object()}),
+                ({#'raise_error, "Hook lambda was rebound.\n"})})));
+
+            object o = clone_object(this_object(), 42, 10);
+            destruct(o);
+            return 1;
+        :)
+    }),
+    ({ "clone_object 5", 0,
+        (:
+            /* Check that the hook got all the arguments. */
+            set_driver_hook(H_CREATE_CLONE,
+                function void(object ob, varargs int* args)
+                {
+                    if (sizeof(args) == 2)
+                        ob.create_clone(args...);
+                });
+
+            object o = clone_object(this_object(), 42, 10);
+            mixed res = o->get_args();
+            destruct(o);
+            return res == 52;
         :)
     }),
     ({ "configure_interactive (privileged)", 0,
@@ -492,6 +542,15 @@ mixed *tests = ({
     ({ "regmatch 11", 0, (: regmatch("--A--B--", "A.*.B") == "A--B" :) }),
     ({ "regmatch 12", 0, (: string result; return catch(result = regmatch("A"*100000, "(A|B)*", RE_TRADITIONAL)) || result; :) }),
     ({ "regmatch 13", 0, (: string result; return catch(result = regmatch("A"*100000, "(B|A)*", RE_TRADITIONAL)) || result; :) }),
+    ({ "regmatch 14", 0, (: regmatch("A\x00BC", "A\x00BC", RE_TRADITIONAL) == "A\x00BC" :) }),
+    ({ "regmatch 15", 0, (: regmatch("A\x00BC", "A\\x00BC", RE_PCRE) == "A\x00BC" :) }),
+    ({ "regmatch 16", 0, (: regmatch("A\x00BC", "BC", RE_TRADITIONAL) == "BC" :) }),
+    ({ "regmatch 17", 0, (: regmatch("A\x00BC", "BC", RE_PCRE) == "BC" :) }),
+
+    ({ "regreplace 1", 0, (: regreplace("A\x00BC", "\x00.", "X", RE_TRADITIONAL) == "AXC" :) }),
+    ({ "regreplace 2", 0, (: regreplace("A\x00BC", "\\x00.", "X", RE_PCRE) == "AXC" :) }),
+    ({ "regreplace 3", 0, (: regreplace("A\x00BC", "B", "X", RE_TRADITIONAL) == "A\x00XC" :) }),
+    ({ "regreplace 4", 0, (: regreplace("A\x00BC", "B", "X", RE_PCRE) == "A\x00XC" :) }),
 
     ({ "sscanf 1", 0, (: sscanf("A10", "A%~d") == 1 :) }),
     ({ "sscanf 2", 0, (: sscanf("B10", "A%~d") == 0 :) }),
@@ -663,6 +722,8 @@ mixed *tests = ({
     ({ "to_struct anonymous from array", 0, (: mixed s = to_struct(({10, 20})); return sizeof(s) == 2 && s.(0) == 10 && s.(1) == 20; :) }),
     ({ "to_struct templated from array 1", 0, (: deep_eq(to_struct(({({10, 20})}), (<test_struct>)), (<test_struct> ({10,20}))) :) }),
     ({ "to_struct templated from array 2", 0, (: deep_eq(to_struct(({({10, 20}), ({30, 40})}), (<test_struct>)), (<test_struct> ({10,20}))) :) }),
+    ({ "to_struct derived from base struct", 0, (: mixed b = (<test_struct> ({10,20})); return deep_eq(to_struct(b, (<derived_struct>)), (<derived_struct> ({10,20}), 0)); :) }),
+    ({ "to_struct base from derived struct", 0, (: mixed d = (<derived_struct> ({10,20}), ({"A","B"})); return deep_eq(to_struct(d, (<test_struct>)), (<test_struct> ({10,20}))); :) }),
 
     ({ "get_type_info with temporary anonymous struct 1", 0, (: deep_eq(get_type_info(to_struct((["A": 10]))), ({ T_STRUCT, "anonymous" })) :) }),
     ({ "get_type_info with temporary anonymous struct 2", 0, (: !strstr(get_type_info(to_struct((["A": 10])), 2), "anonymous ") :) }),
@@ -835,6 +896,8 @@ mixed *tests = ({
         :)
     }),
 
+    ({ "unique_array 1", 0,  (: last_rt_warning = 0; unique_array(({}), "ThisFunctionDoesNotExist"); return !last_rt_warning; :) }),
+    ({ "unique_array 2", 0,  (: last_rt_warning = 0; unique_array(({this_object()}), "ThisFunctionDoesNotExist"); return !last_rt_warning; :) }),
 
     ({ "variable_list 1", 0, (: deep_eq(variable_list(this_object()),                        ({ "last_rt_warning",            "json_testdata", "json_teststring", "b",              "dhe_testdata", "global_var", "clone",     "last_privi_op", "last_privi_who", "last_privi_args",          "tests",                   "args"      })) :) }),
     ({ "variable_list 2", 0, (: deep_eq(map(variable_list(this_object(), RETURN_FUNCTION_FLAGS), #'&, NAME_INHERITED|TYPE_MOD_NOSAVE|TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED|TYPE_MOD_VIRTUAL|TYPE_MOD_NO_MASK|TYPE_MOD_PUBLIC),
@@ -877,6 +940,13 @@ mixed *tests = ({
         (: deep_eq(json_parse(json_serialize(json_testdata)), json_testdata) 
          :) }),
 #endif // __JSON__
+
+#ifdef __MYSQL__
+    ({ "db_conv_string without db connection", 0,
+        (: db_conv_string("ldmud") == "ldmud" :) // This shouldn't crash.
+    }),
+#endif // __MYSQL__
+
 #ifdef __TLS__
 }) + (tls_available() ? ({
     ({ "configure_driver DHE 1 (testdata)", 0,

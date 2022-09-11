@@ -164,8 +164,8 @@ struct ident_s
               /* variable: Index number in the variable table.
                *           During compilation, virtual variables are offset
                *           by VIRTUAL_VAR_TAG.
-               * == I_GLOBAL_VARIABLE_OTHER: lfun/inherited hidden var
-               * == I_GLOBAL_VARIABLE_FUN:   efun/sefun
+               * == I_GLOBAL_VARIABLE_OTHER:        other program identifier
+               * == I_GLOBAL_VARIABLE_WORLDWIDE:    other worldwide identifier
                */
             unsigned short efun;
               /* efun: Index in instrs[]
@@ -178,6 +178,10 @@ struct ident_s
             unsigned short struct_id;
               /* struct index ('id') in the current program's struct table.
                * == I_GLOBAL_STRUCT_NONE: undefined
+               */
+            unsigned short sefun_struct_id;
+              /* struct index in the simul-efun's program's struct table.
+               * == I_GLOBAL_SEFUN_STRUCT_NONE: not a simul-efun struct.
                */
 #ifdef USE_PYTHON
             unsigned short python_efun;
@@ -213,15 +217,16 @@ struct ident_s
 
 /* ident_t.global magic values */
 
-#define I_GLOBAL_FUNCTION_OTHER  (USHRT_MAX)
-#define I_GLOBAL_VARIABLE_OTHER  (USHRT_MAX)
-#define I_GLOBAL_VARIABLE_FUN    (USHRT_MAX - 1)
-#define I_GLOBAL_EFUN_OTHER      (USHRT_MAX)
-#define I_GLOBAL_SEFUN_OTHER     (USHRT_MAX)
-#define I_GLOBAL_SEFUN_BY_NAME   (USHRT_MAX - 2)        /* Has no entry in the table. */
-#define I_GLOBAL_STRUCT_NONE     (USHRT_MAX)
+#define I_GLOBAL_FUNCTION_OTHER         (USHRT_MAX)
+#define I_GLOBAL_VARIABLE_OTHER         (USHRT_MAX)
+#define I_GLOBAL_VARIABLE_WORLDWIDE     (USHRT_MAX - 1)
+#define I_GLOBAL_EFUN_OTHER             (USHRT_MAX)
+#define I_GLOBAL_SEFUN_OTHER            (USHRT_MAX)
+#define I_GLOBAL_SEFUN_BY_NAME          (USHRT_MAX - 2) /* Has no entry in the table. */
+#define I_GLOBAL_STRUCT_NONE            (USHRT_MAX)
+#define I_GLOBAL_SEFUN_STRUCT_NONE      (USHRT_MAX)
 #ifdef USE_PYTHON
-#  define I_GLOBAL_PYTHON_EFUN_OTHER (USHRT_MAX)
+#  define I_GLOBAL_PYTHON_EFUN_OTHER    (USHRT_MAX)
 #endif
 
 
@@ -248,6 +253,7 @@ extern bool pragma_no_clone;
 extern bool pragma_no_lightweight;
 extern Bool pragma_no_inherit;
 extern Bool pragma_no_shadow;
+extern bool pragma_no_simul_efuns;
 extern Bool pragma_pedantic;
 extern Bool pragma_range_check;
 extern Bool pragma_warn_missing_return;
@@ -284,7 +290,7 @@ extern void init_lexer(void);
 extern int  symbol_operator(const char *symbol, const char **endp);
 extern void symbol_efun_str(const char *str, size_t len, svalue_t *sp, efun_override_t is_efun, bool privileged);
 extern void symbol_efun(string_t *name, svalue_t *sp);
-extern void init_global_identifier (ident_t * ident, Bool bVariable);
+extern void init_global_identifier (ident_t * ident, bool bProgram);
 extern ident_t *lookfor_shared_identifier(const char *s, size_t len, int n, int depth, bool bCreate, bool bExactDepth);
 #define make_shared_identifier(s,n,d) lookfor_shared_identifier(s,strlen(s),n,d, true, false)
 #define find_shared_identifier(s,n,d) lookfor_shared_identifier(s,strlen(s),n,d, false, false)

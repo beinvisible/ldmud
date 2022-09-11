@@ -4,7 +4,7 @@ CONCEPT
 INTRODUCTION
         Lightweight objects are a cross between regular objects and structs.
         Like regular objects they are build from programs (.c files) and
-        encapsulate data und functions. Like structs they are automatically
+        encapsulate data and functions. Like structs they are automatically
         destructed, they can be copied and saved.
 
         As with regular objects its variables are hidden from outside
@@ -61,6 +61,10 @@ MISCELLANEOUS
         Lightweight objects can be serialized with save_value(), so
         any outside program can inspect its variables. To really hide
         variable contents they must be nosave.
+
+        Prior to restoring or copying a lightweight object all variables
+        of the new lightweight object will be initialized regularly first
+        when pragma init_variables is in effect.
 
 
 HISTORY

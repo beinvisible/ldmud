@@ -114,6 +114,34 @@ class TestObject(unittest.TestCase):
         with self.assertRaises(AttributeError):
             ob.doesntExist
 
+    def testUninitializedObject(self):
+        ob = ldmud.Object.__new__(ldmud.Object)
+        self.assertEqual(ldmud.efuns.copy(ob), 0)
+
+    def testSwappedObject(self):
+        swap = getattr(ldmud.efuns, 'swap', None)
+        if swap:
+            ob = ldmud.Object("/testob")
+            swap(ob)
+
+            fun = ob.functions.testfun
+            swap(ob)
+            self.assertEqual(fun.file_name, "/testob.c")
+            swap(ob)
+            self.assertEqual(fun.arguments[1].type, ldmud.Array)
+            swap(ob)
+            self.assertEqual(fun(10, "A", "B", "C"), 3)
+
+            swap(ob)
+            var = ob.variables.testvar
+            swap(ob)
+            self.assertEqual(var.name, "testvar")
+            swap(ob)
+            var.value = 100
+            swap(ob)
+            self.assertEqual(var.value, 100)
+            var.value = 42
+
 class TestLWObject(unittest.TestCase):
     def testInitLoaded(self):
         blueprint = ldmud.Object("/testob")
@@ -192,6 +220,10 @@ class TestLWObject(unittest.TestCase):
         with self.assertRaises(TypeError):
             var.value = "42"
         self.assertEqual(var.value, 84)
+
+    def testUninitializedLWObject(self):
+        lwob = ldmud.LWObject.__new__(ldmud.LWObject)
+        self.assertEqual(ldmud.efuns.copy(lwob), 0)
 
 class TestArray(unittest.TestCase):
     def testInitEmpty(self):
@@ -291,6 +323,11 @@ class TestArray(unittest.TestCase):
         del parr[10:0:-3]
         self.assertEqual(list(arr), parr)
 
+    def testUninitializedArray(self):
+        arr = ldmud.Array.__new__(ldmud.Array)
+        ca = ldmud.efuns.copy(arr)
+        self.assertIsNotNone(ca)
+        self.assertEqual(len(ca), 0)
 
 class TestMapping(unittest.TestCase):
     def testInitEmpty(self):
@@ -363,6 +400,9 @@ class TestMapping(unittest.TestCase):
         self.assertEqual(m['One'], 1)
         self.assertEqual(m['Three'], 3)
 
+        with self.assertRaises(RuntimeError):
+            del m["One",1]
+
     def testGetSetWide(self):
         m = ldmud.Mapping(width=2)
         self.assertIsNotNone(m)
@@ -394,11 +434,54 @@ class TestMapping(unittest.TestCase):
         with self.assertRaises(IndexError):
             m['Hi',2] = 0
 
+    def testGetSetRange(self):
+        m = ldmud.Mapping((( "K", 0, 1, 2, 3, 4, 5, 6, 7 ),))
+
+        self.assertIsNotNone(m)
+        self.assertEqual(len(m), 1)
+        self.assertEqual(m.width, 8)
+
+        self.assertEqual(list(m["K",3:5]), [3,4])
+        self.assertEqual(list(m["K",5:3:-1]), [5,4])
+        self.assertEqual(list(m["K",::-2]), list(range(7,0,-2)))
+
+        m["K",::-1] = ldmud.Array(range(8))
+        self.assertEqual(list(m["K",:]), list(range(7,-1,-1)))
+
+        m["K",5:6] = ldmud.Array([10])
+        self.assertEqual(list(m["K",:]), [7, 6, 5, 4, 3, 10, 1, 0])
+
+        m["K",4:2:-1] = ldmud.Array([100,101])
+        self.assertEqual(list(m["K",:]), [7, 6, 5, 101, 100, 10, 1, 0])
+
+        with self.assertRaises(ValueError):
+            m["K",1:2] = ldmud.Array([-1,-2])
+        with self.assertRaises(ValueError):
+            m["K",1:2] = ldmud.Array([])
+        with self.assertRaises(RuntimeError):
+            del m["K",1:2]
+
     def testIterator(self):
         m = ldmud.Mapping( { "One": 1, "Two": 2, "Three": 3 } );
         self.assertEqual(dict(m), { "One": 1, "Two": 2, "Three": 3})
         self.assertEqual(set(m.keys()), set(("One", "Two", "Three",)))
         self.assertEqual(set(m.values()), set((1,2,3,)))
+
+    def testUninitializedMapping(self):
+        m = ldmud.Mapping.__new__(ldmud.Mapping)
+        cm = ldmud.efuns.copy(m)
+        self.assertIsNotNone(cm)
+        self.assertEqual(len(cm), 0)
+
+    def testInitLeak(self):
+        DI_NUM_MAPPINGS = -415
+        num_arr = ldmud.efuns.driver_info(DI_NUM_MAPPINGS)
+
+        m = ldmud.Mapping({"A": ldmud.Mapping() })
+        self.assertEqual(ldmud.efuns.driver_info(DI_NUM_MAPPINGS), num_arr+2)
+
+        del m
+        self.assertEqual(ldmud.efuns.driver_info(DI_NUM_MAPPINGS), num_arr)
 
 class TestStruct(unittest.TestCase):
     def setUp(self):
@@ -455,6 +538,10 @@ class TestStruct(unittest.TestCase):
         self.assertEqual(s.members.t_int.value, 123)
         self.assertEqual(s.members.t_float.value, 5.5)
         self.assertEqual(s.members.t_string.value, 'Hello!')
+
+    def testUninitializedStruct(self):
+        s = ldmud.Struct.__new__(ldmud.Struct)
+        self.assertEqual(ldmud.efuns.copy(s), 0)
 
 class TestClosure(unittest.TestCase):
     def setUp(self):
@@ -515,6 +602,17 @@ class TestClosure(unittest.TestCase):
         with self.assertRaises(Exception):
             s()
         self.assertFalse(s)
+        self.assertEqual(ldmud.efuns.copy(s), 0)
+
+    def testSwappedObjectLfun(self):
+        swap = getattr(ldmud.efuns, 'swap', None)
+        if swap:
+            ob = ldmud.Object("/testob")
+            swap(ob)
+            c = ldmud.Closure(ob, "testfun", ob)
+            swap(ob)
+            self.assertEqual(c(10, "A", "B", "C"), 3)
+            ldmud.efuns.destruct(ob)
 
 class TestCoroutine(unittest.TestCase):
     def setUp(self):
@@ -593,6 +691,7 @@ class TestCoroutine(unittest.TestCase):
         with self.assertRaises(Exception):
             c()
         self.assertFalse(c)
+        self.assertEqual(ldmud.efuns.copy(c), 0)
 
 class TestSymbol(unittest.TestCase):
     def testSymbolInit(self):
@@ -619,6 +718,10 @@ class TestSymbol(unittest.TestCase):
         self.assertEqual(s1, s2)
         self.assertNotEqual(s1, s3)
         self.assertNotEqual(s1, s4)
+
+    def testUninitializedSymbol(self):
+        s = ldmud.Symbol.__new__(ldmud.Symbol)
+        self.assertEqual(ldmud.efuns.copy(s), 0)
 
 class TestQuotedArray(unittest.TestCase):
     def testQuotedArrayInit(self):
@@ -649,6 +752,10 @@ class TestQuotedArray(unittest.TestCase):
     def testQuotedArrayInitInvalid(self):
         with self.assertRaises(TypeError):
             ldmud.QuotedArray(1.5, 1)
+
+    def testUninitializedQuotedArray(self):
+        qa = ldmud.QuotedArray.__new__(ldmud.QuotedArray)
+        self.assertEqual(ldmud.efuns.copy(qa), 0)
 
 class TestLvalue(unittest.TestCase):
     def testLvalueInit(self):
@@ -712,6 +819,49 @@ class TestLvalue(unittest.TestCase):
         self.assertEqual(m[3], 9)
         self.assertEqual(item.value, 9)
 
+    def testLvalueMappingRange(self):
+        m = ldmud.Mapping(((1,11,12,13,14,15), (2,21,22,23,24,25), (3,31,32,33,34,35),))
+        lv = ldmud.Lvalue(m);
+
+        lvr1 = lv[1,1:3]
+        self.assertEqual(list(lvr1.value), [12,13])
+        self.assertEqual(list(lvr1[:].value), [12,13])
+        self.assertEqual(lvr1[0].value, 12)
+        self.assertEqual(len(lvr1), 2)
+        lvr1[0].value = 112
+        self.assertEqual(m[1,1], 112)
+
+        lvr2 = lv[2,2:0:-1]
+        self.assertEqual(list(lvr2.value), [23,22])
+        self.assertEqual(list(lvr2[:].value), [23,22])
+        self.assertEqual(lvr2[0].value, 23)
+        self.assertEqual(len(lvr2), 2)
+        lvr2[0].value = 223
+        self.assertEqual(m[2,2], 223)
+
+    def testLvalueMappingNewRange(self):
+        m = ldmud.Mapping(width = 5)
+        lv = ldmud.Lvalue(m);
+
+        lvr1 = lv[1,1:3]
+        self.assertEqual(list(lvr1.value), [0,0])
+        self.assertEqual(list(lvr1[:].value), [0,0])
+        self.assertEqual(lvr1[0].value, 0)
+        self.assertEqual(len(lvr1), 2)
+        self.assertEqual(len(m), 0)
+        lvr1[0].value = 112
+        self.assertEqual(len(m), 1)
+        self.assertEqual(list(m[1,:]), [0,112,0,0,0])
+
+        lvr2 = lv[2,2:0:-1]
+        self.assertEqual(list(lvr2.value), [0,0])
+        self.assertEqual(list(lvr2[:].value), [0,0])
+        self.assertEqual(lvr2[0].value, 0)
+        self.assertEqual(len(lvr2), 2)
+        lvr2[0].value = 223
+        self.assertEqual(len(m), 2)
+        self.assertEqual(list(m[2,:]), [0,0,223,0,0])
+
     def testLvalueStructItem(self):
         s = ldmud.Struct(ldmud.get_master(), "test_struct", (10,))
         self.assertIsNotNone(s)
@@ -722,6 +872,10 @@ class TestLvalue(unittest.TestCase):
         self.assertEqual(s.members.t_int.value, 100)
         s.members.t_int.value = 1000
         self.assertEqual(lv.members.t_int.value, 1000)
+
+    def testUninitializedLvalue(self):
+        lv = ldmud.Lvalue.__new__(ldmud.Lvalue)
+        self.assertEqual(ldmud.efuns.copy(lv), 0)
 
 class TestEfuns(unittest.TestCase):
     def testDir(self):

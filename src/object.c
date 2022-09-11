@@ -830,35 +830,30 @@ reset_object (object_t *ob, int arg, int num_arg)
 
     if (driver_hook[arg].type == T_CLOSURE)
     {
-        lambda_t *l;
-
         if (arg == H_RESET)
         {
             set_current_object(ob);
             previous_ob = current_object;
         }
 
-        l = driver_hook[arg].u.lambda;
-        if (l->function.code.num_arg && arg != H_RESET)
+        if (driver_hook[arg].x.closure_type != CLOSURE_UNBOUND_LAMBDA
+         || driver_hook[arg].u.lambda->function.code.num_arg)
         {
-            /* closure accepts arguments, presumably one, so
-             * give it the target object and bind to the current
-             * object.
+            /* closure accepts arguments, so give it the target object
+             * and if necessary bind to the current object.
              */
-            assign_current_object(&(l->ob), "reset_object");
 
             /* We need to insert the object before the other arguments. */
             inter_sp++;
             memmove(inter_sp - num_arg + 1, inter_sp - num_arg, num_arg * sizeof(*inter_sp));
             put_ref_object(inter_sp - num_arg, ob, "reset");
-            call_lambda(&driver_hook[arg], 1 + num_arg);
+            call_lambda_ob(&driver_hook[arg], 1 + num_arg, &current_object);
         }
         else
         {
-            /* no arguments, just bind to target */
-            free_svalue(&(l->ob));
-            put_ref_object(&(l->ob), ob, "reset_object");
-            call_lambda(&driver_hook[arg], 0);
+            /* No arguments, bind to target. */
+            svalue_t obsv = svalue_object(ob);
+            call_lambda_ob(&driver_hook[arg], 0, &obsv);
             inter_sp = pop_n_elems(num_arg, inter_sp);
         }
 
@@ -5990,6 +5985,7 @@ save_lwobject (lwobject_t *lwob)
 
 {
     int num;
+    bool first = true;
 
     /* Recall the struct from the pointer table.
      * If it is a shared one, there's nothing else to do.
@@ -6016,10 +6012,16 @@ save_lwobject (lwobject_t *lwob)
     num = lwob->prog->num_variables;
     for (int i = 0; i < num; i++)
     {
-        if (i)
-            MY_PUTC(',')
-        else
+        if (lwob->prog->variables[i].type.t_flags & TYPE_MOD_STATIC)
+            continue;
+
+        if (first)
+        {
             MY_PUTC(' ')
+            first = false;
+        }
+        else
+            MY_PUTC(',')
 
         save_string(lwob->prog->variables[i].name, -1, -1, true);
     }
@@ -6034,6 +6036,9 @@ save_lwobject (lwobject_t *lwob)
     /* And now ... the variable values. */
     for (int i = 0; i < num; i++)
     {
+        if (lwob->prog->variables[i].type.t_flags & TYPE_MOD_STATIC)
+            continue;
+
         save_svalue(lwob->variables + i, ',', MY_FALSE);
     }
 
@@ -6560,14 +6565,6 @@ save_lvalue (svalue_t *v, char delimiter, Bool writable)
                 if(recall_pointer(r))
                     break;
 
-                /* Only one reference? No need for an lvalue reference here. */
-                if(!lookup_pointer(ptable,r)->ref_count)
-                {
-                    /* Go to the fallback. */
-                    done = false;
-                    break;
-                }
-
                 /* Check whether the variable reference is still valid. */
                 var_valid = (r->var != NULL
                  && ((r->vec.type == T_POINTER && r->var->val.type == T_POINTER && r->vec.u.vec == r->var->val.u.vec)
@@ -6584,6 +6581,14 @@ save_lvalue (svalue_t *v, char delimiter, Bool writable)
 
                 if (!vec_referenced && var_valid)
                     vec_referenced = lookup_pointer(ptable, r->var)->ref_count;
+
+                /* Only one reference? No need for an lvalue reference here. */
+                if(!vec_referenced && !lookup_pointer(ptable,r)->ref_count)
+                {
+                    /* Go to the fallback. */
+                    done = false;
+                    break;
+                }
 
                 {
                     L_PUTC_PROLOG
@@ -6685,6 +6690,37 @@ save_lvalue (svalue_t *v, char delimiter, Bool writable)
                 MY_PUTC(')')
                 break;
             }
+
+            case LVALUE_PROTECTED_MAP_RANGE:
+            {
+                /* Format: <1>=&(<2>=map,key,index1..index2-1) */
+                struct protected_map_range_lvalue *r = v->u.protected_map_range_lvalue;
+
+                if(recall_pointer(r))
+                    break;
+
+                {
+                    L_PUTC_PROLOG
+                    L_PUTC('&')
+                    L_PUTC('(')
+                    L_PUTC_EPILOG
+                }
+
+                save_mapping(r->map);
+
+                MY_PUTC(',')
+
+                if (!save_svalue(&(r->key), ',', MY_FALSE))
+                    return MY_FALSE;
+
+                save_number(r->index1);
+                MY_PUTC('.')
+                MY_PUTC('.')
+                save_number(r->index2 - 1);
+
+                MY_PUTC(')')
+                break;
+            }
         } /* switch() */
     }
 
@@ -6741,6 +6777,38 @@ save_lvalue (svalue_t *v, char delimiter, Bool writable)
                     save_number(0);
                 else
                     return save_svalue(item + e->index, delimiter, writable);
+                break;
+            }
+
+            case LVALUE_PROTECTED_MAP_RANGE:
+            {
+                /* Save this as an array. */
+                struct protected_map_range_lvalue *r = v->u.protected_map_range_lvalue;
+                svalue_t *item;
+
+                if(recall_pointer(r))
+                    break;
+
+                MY_PUTC('(')
+                MY_PUTC('{')
+
+                item = get_map_value(r->map, &(r->key));
+                if (item == &const0)
+                {
+                    for (mp_int i = r->index1; i < r->index2; i++)
+                    {
+                        MY_PUTC('0');
+                        MY_PUTC(',');
+                    }
+                }
+                else
+                {
+                    for (mp_int i = r->index1; i < r->index2; i++)
+                        save_svalue(item + i, ',', MY_FALSE);
+                }
+
+                MY_PUTC('}')
+                MY_PUTC(')')
                 break;
             }
         } /* switch() */
@@ -7084,10 +7152,18 @@ register_svalue (svalue_t *svp)
         {
             /* For older format, just do the recursion.
              * And treat ranges as normal arrays. */
-            if (svp->x.lvalue_type == LVALUE_PROTECTED)
-                register_svalue(&(svp->u.protected_lvalue->val));
-            else if (svp->x.lvalue_type == LVALUE_PROTECTED_RANGE)
-                register_pointer(ptable, svp->u.protected_range_lvalue);
+            switch (svp->x.lvalue_type)
+            {
+                case LVALUE_PROTECTED:
+                    register_svalue(&(svp->u.protected_lvalue->val));
+                    break;
+                case LVALUE_PROTECTED_RANGE:
+                    register_pointer(ptable, svp->u.protected_range_lvalue);
+                    break;
+                case LVALUE_PROTECTED_MAP_RANGE:
+                    register_pointer(ptable, svp->u.protected_map_range_lvalue);
+                    break;
+            }
             break;
         }
 
@@ -7136,6 +7212,18 @@ register_svalue (svalue_t *svp)
                 {
                     register_mapping(e->map);
                     register_svalue(&(e->key));
+                }
+                break;
+            }
+
+            case LVALUE_PROTECTED_MAP_RANGE:
+            {
+                struct protected_map_range_lvalue *r = svp->u.protected_map_range_lvalue;
+
+                if (register_pointer(ptable, r) != NULL)
+                {
+                    register_mapping(r->map);
+                    register_svalue(&(r->key));
                 }
                 break;
             }
@@ -7777,7 +7865,7 @@ skip_element (char **str)
             return true;
         }
 
-        case '(':  /* array, struct or mapping */
+        case '(':  /* array, struct, mapping or lightweight object*/
         {
             /* Lazy way of doing it, a bit inefficient */
             struct rms_parameters tmp_par;
@@ -7786,6 +7874,7 @@ skip_element (char **str)
             tmp_par.str = pt + 2;
             if (pt[1] == '{'
              || pt[1] == '<'
+             || pt[1] == '*'
                )
                 tsiz = restore_size(&tmp_par.str);
             else if (pt[1] == '[')
@@ -8148,6 +8237,7 @@ restore_size (char **str)
         {
         case '}':  /* End of array */
         case '>':  /* End of struct */
+        case '*':  /* End of lightweight object */
           {
             if (pt[1] != ')')
                 return -1;
@@ -8281,7 +8371,8 @@ restore_lwobject (svalue_t *svp, char **str)
     blueprint = get_object(prog_name);
     pop_stack(); /* Freeing prog_name. */
     if ((!blueprint)
-     || (O_PROG_SWAPPED(blueprint) && load_ob_from_swap(blueprint) < 0))
+     || (O_PROG_SWAPPED(blueprint) && load_ob_from_swap(blueprint) < 0)
+     || (blueprint->prog->flags & P_NO_LIGHTWEIGHT))
     {
         pop_stack(); /* Freeing name. */
         return false;
@@ -8321,7 +8412,8 @@ restore_lwobject (svalue_t *svp, char **str)
             int next_var_idx = cur_var_idx;
             while (true)
             {
-                if (prog->variables[next_var_idx].name == var_name)
+                if (!(prog->variables[next_var_idx].type.t_flags & TYPE_MOD_STATIC)
+                 && prog->variables[next_var_idx].name == var_name)
                 {
                     variable = lwob->variables + next_var_idx;
                     vartype = prog->variables[next_var_idx].type.t_type;
@@ -8337,41 +8429,42 @@ restore_lwobject (svalue_t *svp, char **str)
             }
         }
 
+        /* Restore the value and put it on the stack first. */
+        push_number(inter_sp, 0);
+        if (!restore_svalue(inter_sp, str, ','))
+        {
+            inter_sp--;
+            pop_stack();
+            free_svalue(svp);
+            *svp = const0;
+            return false;
+        }
+
         if (!variable)
         {
             /* The variable doesn't exist anymore, read and discard. */
-            svalue_t tmp;
-            if (!restore_svalue(&tmp, str, ','))
-            {
-                pop_stack();
-                free_svalue(svp);
-                *svp = const0;
-                return false;
-            }
-
-            free_svalue(&tmp);
+            pop_stack();
         }
         else
         {
-            if (!restore_svalue(variable, str, ','))
+            if (rtt_checks && !check_rtt_compatibility(vartype, inter_sp))
             {
+                pop_stack();
                 pop_stack();
                 free_svalue(svp);
                 *svp = const0;
                 return false;
             }
 
-            if (rtt_checks && !check_rtt_compatibility(vartype, variable))
-            {
-                pop_stack();
-                free_svalue(svp);
-                *svp = const0;
-                return false;
-            }
+            free_svalue(variable);
+            transfer_svalue_no_free(variable, inter_sp);
+            inter_sp--;
         }
     }
 
     pop_stack(); /* Freeing name. */
+
+    reset_lwobject(lwob, H_CREATE_LWOBJECT_RESTORE, 0);
 
     (*str)++;
     if (**str != ')')
@@ -9149,6 +9242,7 @@ restore_lvalue (svalue_t *svp, char **str)
         svalue_t key;
         int idx;
         char * cp;
+        bool fail = false;
 
         if (!restore_svalue(&key, str, ','))
         {
@@ -9159,16 +9253,45 @@ restore_lvalue (svalue_t *svp, char **str)
 
         cp = *str;
         idx = strtol(*str, str, 10);
-        if (cp == *str || *((*str)++) != ')')
+        if (cp == *str || idx < 0)
         {
-            free_svalue(&key);
+            fail = true;
+        }
+        else if (**str == ')')
+        {
+            /* Mapping entry. */
+            (*str)++;
+
+            if (idx >= val->u.map->num_values)
+                fail = true;
+            else
+                assign_protected_mapentry_lvalue_no_free(&dummy, val->u.map, &key, idx);
+        }
+        else if (*((*str)++) == '.' && *((*str)++) == '.')
+        {
+            /* Mapping range. */
+            int idx2;
+
+            cp = *str;
+            idx2 = strtol(*str, str, 10);
+            if (cp == *str || *((*str)++) != ')'
+             || idx > val->u.map->num_values
+             || idx2 < -1 || idx2 >= val->u.map->num_values
+             || idx > idx2 + 1)
+                fail = true;
+            else
+                assign_protected_map_range_lvalue_no_free(&dummy, val->u.map, &key, idx, idx2+1);
+        }
+        else
+            fail = true;
+
+        free_svalue(&key);
+        if (fail)
+        {
             free_svalue(svp);
             *svp = const0;
             return false;
         }
-
-        assign_protected_mapentry_lvalue_no_free(&dummy, val->u.map, &key, idx);
-        free_svalue(&key);
     }
     else
     {
@@ -9210,7 +9333,7 @@ restore_lvalue (svalue_t *svp, char **str)
                 return false;
         }
 
-        if (idx1 < 0 || idx1 > size || idx2 <= -1 || idx2 >= size || idx1 > idx2 + 1)
+        if (idx1 < 0 || idx1 > size || idx2 < -1 || idx2 >= size || idx1 > idx2 + 1)
         {
             free_svalue(svp);
             *svp = const0;

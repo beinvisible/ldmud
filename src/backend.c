@@ -1421,15 +1421,12 @@ static Bool did_swap;
              * is inherited by other objects. Cloned objects might as well
              * believe they are not inherited. Swapped objects will not
              * have a ref count > 1 (and will have an invalid ob->prog
-             * pointer). If the object is a blueprint, the extra reference
-             * from the program will not be counted.
+             * pointer).
              */
             if (obj->flags & (O_CLONE|O_REPLACED))
                 push_number(inter_sp, 0);
             else if (O_PROG_SWAPPED(obj))
                 push_number(inter_sp, 1);
-            else if (obj->prog->blueprint == obj)
-                push_number(inter_sp, obj->prog->ref - 1);
             else
                 push_number(inter_sp, obj->prog->ref);
 
@@ -1441,17 +1438,9 @@ static Bool did_swap;
             trace_level = 0;
             if (driver_hook[H_CLEAN_UP].type == T_CLOSURE)
             {
-                lambda_t *l;
-
                 mark_start_evaluation();
-                l = driver_hook[H_CLEAN_UP].u.lambda;
-                if (driver_hook[H_CLEAN_UP].x.closure_type == CLOSURE_LAMBDA)
-                {
-                    free_svalue(&(l->ob));
-                    put_ref_object(&(l->ob), obj, "clean_up");
-                }
                 push_ref_object(inter_sp, obj, "clean up");
-                call_lambda(&driver_hook[H_CLEAN_UP], 2);
+                call_lambda_ob(&driver_hook[H_CLEAN_UP], 2, inter_sp);
                 svp = inter_sp;
                 pop_stack();
                 mark_end_evaluation();

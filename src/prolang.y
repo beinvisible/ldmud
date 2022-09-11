@@ -163,10 +163,6 @@ Bool variables_defined;
   /* TRUE: Variable definitions have been encountered.
    */
 
-bool disable_sefuns;
-  /* TRUE: Sefuns will be ignored.
-   */
-
 /*-------------------------------------------------------------------------*/
 /* Table which hook may be of which type.
  * It is here because make_func has to touch this file anyway, but
@@ -179,32 +175,34 @@ short hook_type_map[NUM_DRIVER_HOOKS] =
 %hookmap \
     H_MOVE_OBJECT0: 0, \
     H_MOVE_OBJECT1: 0, \
-    H_LOAD_UIDS:      SH(T_CLOSURE), \
-    H_CLONE_UIDS:     SH(T_CLOSURE), \
-    H_LWOBJECT_UIDS:  SH(T_CLOSURE), \
-    H_CREATE_SUPER:                 SH(T_STRING), \
-    H_CREATE_OB:                    SH(T_STRING), \
-    H_CREATE_CLONE:                 SH(T_STRING), \
-    H_CREATE_LWOBJECT:              SH(T_STRING), \
-    H_RESET:                        SH(T_STRING), \
-    H_CLEAN_UP:       SH(T_CLOSURE) SH(T_STRING), \
-    H_MODIFY_COMMAND: SH(T_CLOSURE) SH(T_STRING) SH(T_MAPPING), \
-    H_NOTIFY_FAIL:    SH(T_CLOSURE) SH(T_STRING), \
-    H_NO_IPC_SLOT:                  SH(T_STRING), \
-    H_INCLUDE_DIRS:   SH(T_CLOSURE)              SH(T_POINTER), \
-    H_TELNET_NEG:     SH(T_CLOSURE) SH(T_STRING), \
-    H_NOECHO:         SH(T_CLOSURE) SH(T_STRING), \
-    H_ERQ_STOP:       SH(T_CLOSURE), \
-    H_MODIFY_COMMAND_FNAME: SH(T_STRING), \
-    H_COMMAND:        SH(T_CLOSURE) SH(T_STRING), \
-    H_SEND_NOTIFY_FAIL: SH(T_CLOSURE) SH(T_STRING), \
-    H_AUTO_INCLUDE:   SH(T_CLOSURE) SH(T_STRING), \
-    H_FILE_ENCODING:  SH(T_CLOSURE) SH(T_STRING), \
-    H_DEFAULT_METHOD: SH(T_CLOSURE) SH(T_STRING), \
-    H_DEFAULT_PROMPT: SH(T_CLOSURE) SH(T_STRING), \
-    H_PRINT_PROMPT:   SH(T_CLOSURE) SH(T_STRING), \
-    H_REGEXP_PACKAGE: SH(T_NUMBER), \
-    H_MSG_DISCARDED:  SH(T_CLOSURE) SH(T_STRING), \
+    H_LOAD_UIDS:                SH(T_CLOSURE), \
+    H_CLONE_UIDS:               SH(T_CLOSURE), \
+    H_LWOBJECT_UIDS:            SH(T_CLOSURE), \
+    H_CREATE_SUPER:             SH(T_CLOSURE) SH(T_STRING), \
+    H_CREATE_OB:                SH(T_CLOSURE) SH(T_STRING), \
+    H_CREATE_CLONE:             SH(T_CLOSURE) SH(T_STRING), \
+    H_CREATE_LWOBJECT:          SH(T_CLOSURE) SH(T_STRING), \
+    H_CREATE_LWOBJECT_COPY:     SH(T_CLOSURE) SH(T_STRING), \
+    H_CREATE_LWOBJECT_RESTORE:  SH(T_CLOSURE) SH(T_STRING), \
+    H_RESET:                    SH(T_CLOSURE) SH(T_STRING), \
+    H_CLEAN_UP:                 SH(T_CLOSURE) SH(T_STRING), \
+    H_MODIFY_COMMAND:           SH(T_CLOSURE) SH(T_STRING) SH(T_MAPPING), \
+    H_NOTIFY_FAIL:              SH(T_CLOSURE) SH(T_STRING), \
+    H_NO_IPC_SLOT:                            SH(T_STRING), \
+    H_INCLUDE_DIRS:             SH(T_CLOSURE)              SH(T_POINTER), \
+    H_TELNET_NEG:               SH(T_CLOSURE) SH(T_STRING), \
+    H_NOECHO:                   SH(T_CLOSURE) SH(T_STRING), \
+    H_ERQ_STOP:                 SH(T_CLOSURE), \
+    H_MODIFY_COMMAND_FNAME:                   SH(T_STRING), \
+    H_COMMAND:                  SH(T_CLOSURE) SH(T_STRING), \
+    H_SEND_NOTIFY_FAIL:         SH(T_CLOSURE) SH(T_STRING), \
+    H_AUTO_INCLUDE:             SH(T_CLOSURE) SH(T_STRING), \
+    H_FILE_ENCODING:            SH(T_CLOSURE) SH(T_STRING), \
+    H_DEFAULT_METHOD:           SH(T_CLOSURE) SH(T_STRING), \
+    H_DEFAULT_PROMPT:           SH(T_CLOSURE) SH(T_STRING), \
+    H_PRINT_PROMPT:             SH(T_CLOSURE) SH(T_STRING), \
+    H_REGEXP_PACKAGE:                                       SH(T_NUMBER), \
+    H_MSG_DISCARDED:            SH(T_CLOSURE) SH(T_STRING), \
 
 #undef SH
 
@@ -435,6 +433,12 @@ enum e_internal_areas {
      * descriptors are collected here.
      */
 
+ , A_SEFUN_STRUCT_DEFS
+    /* (unsigned short) The indices into A_STRUCT_DEFS for any simul-efun
+     * struct that was used. (An entry is USHRT_MAX if the sefun struct
+     * was not put into A_STRUCT_DEFS, yet.)
+     */
+
  , A_LVALUE_CODE
     /* (bytecode_t): Area where to put lvalue bytecodes.
      * Used for <expr4> which compile rvalue and lvalue code simultaneously.
@@ -466,6 +470,7 @@ typedef global_variable_t A_GLOBAL_VARIABLES_t;
 typedef bytecode_t        A_INLINE_PROGRAM_t;
 typedef inline_closure_t  A_INLINE_CLOSURE_t;
 typedef struct_member_t   A_STRUCT_MEMBERS_t;
+typedef unsigned short    A_SEFUN_STRUCT_DEFS_t;
 typedef bytecode_t        A_LVALUE_CODE_t;
 typedef bytecode_t        A_DEFAULT_VALUES_t;
 typedef p_int             A_DEFAULT_VALUES_POSITION_t;
@@ -583,6 +588,14 @@ static mem_block_t mem_block[NUMAREAS];
 
 #define STRUCT_MEMBER_COUNT     GET_BLOCK_COUNT(A_STRUCT_MEMBERS)
   /* Return the number of struct members stored.
+   */
+
+#define SEFUN_STRUCT_DEF(n)     GET_BLOCK(A_SEFUN_STRUCT_DEFS)[n]
+  /* The index for a simul-efun struct <n> into our struct definitions.
+   */
+
+#define SEFUN_STRUCT_DEF_COUNT  GET_BLOCK_COUNT(A_SEFUN_STRUCT_DEFS)
+  /* Return the number of entries for sefun struct defs.
    */
 
 #define PROG_STRING(n)          GET_BLOCK(A_STRINGS)[n]
@@ -967,7 +980,8 @@ static bool warned_deprecated_in;
 
 static funflag_t default_varmod;
 static funflag_t default_funmod;
-  /* Default visibility modifiers for variables resp. function.
+static funflag_t default_structmod;
+  /* Default visibility modifiers for variables, function resp. structs.
    */
 
 static int heart_beat;
@@ -1127,7 +1141,8 @@ static const char * compiled_file;
 lpctype_t _lpctype_unknown_array, _lpctype_any_array,    _lpctype_int_float,
           _lpctype_int_array,     _lpctype_string_array, _lpctype_object_array,
           _lpctype_bytes_array,   _lpctype_string_bytes, _lpctype_string_or_bytes_array,
-          _lpctype_string_object, _lpctype_string_object_array,
+          _lpctype_string_object, _lpctype_string_object_lwobject,
+          _lpctype_string_object_lwobject_array,
           _lpctype_lwobject_array,_lpctype_any_object_or_lwobject,
           _lpctype_any_object_or_lwobject_array,
           _lpctype_any_object_or_lwobject_array_array,
@@ -1143,7 +1158,8 @@ lpctype_t *lpctype_unknown_array = &_lpctype_unknown_array,
           *lpctype_string_bytes  = &_lpctype_string_bytes,
           *lpctype_string_or_bytes_array = &_lpctype_string_or_bytes_array,
           *lpctype_string_object = &_lpctype_string_object,
-          *lpctype_string_object_array = &_lpctype_string_object_array,
+          *lpctype_string_object_lwobject = &_lpctype_string_object_lwobject,
+          *lpctype_string_object_lwobject_array = &_lpctype_string_object_lwobject_array,
           *lpctype_lwobject_array= &_lpctype_lwobject_array,
           *lpctype_any_object_or_lwobject = &_lpctype_any_object_or_lwobject,
           *lpctype_any_object_or_lwobject_array = &_lpctype_any_object_or_lwobject_array,
@@ -1165,7 +1181,7 @@ static void warn_variable_usage (string_t* name, enum variable_usage usage, cons
 static Bool add_lvalue_code (lvalue_block_t lv, int instruction);
 static void insert_pop_value(void);
 static void add_type_check (lpctype_t *expected, enum type_check_operation op);
-static int insert_inherited(char *, string_t *, program_t **, function_t *, int, bytecode_p);
+static int insert_inherited(char *super_name, string_t *real_name, program_t **super_p, function_t *fun_p, int num_arg);
   /* Returnvalues from insert_inherited(): */
 #  define INHERITED_NOT_FOUND            (-1)
 #  define INHERITED_WILDCARDED_ARGS      (-2)
@@ -1176,7 +1192,7 @@ static void add_new_init_jump(void);
 static void transfer_init_control(void);
 static void copy_structs(program_t *, funflag_t);
 static void new_inline_closure (void);
-static int inherit_program(program_t *from, funflag_t funmodifier, funflag_t varmodifier);
+static int inherit_program(program_t *from, funflag_t funmodifier, funflag_t varmodifier, funflag_t structmodifier);
 static void fix_variable_index_offsets(program_t *);
 static short store_prog_string (string_t *str);
 
@@ -1497,12 +1513,14 @@ DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_VARIABLE, A_VARIABLES)
 DEFINE_ADD_TO_BLOCK_BY_VALUE(ADD_GLOBAL_VARIABLE_INFO, A_GLOBAL_VARIABLES)
 DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_STRUCT_DEF, A_STRUCT_DEFS)
 DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_STRUCT_MEMBER, A_STRUCT_MEMBERS)
+DEFINE_ADD_TO_BLOCK_BY_VALUE(ADD_SEFUN_STRUCT_DEF, A_SEFUN_STRUCT_DEFS);
 DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_INLINE_CLOSURE, A_INLINE_CLOSURE)
 DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_INCLUDE, A_INCLUDES)
 DEFINE_ADD_TO_BLOCK_BY_PTR(ADD_INHERIT, A_INHERITS)
 DEFINE_ADD_TO_BLOCK_BY_VALUE(ADD_DEFAULT_VALUE_POS, A_DEFAULT_VALUES_POSITION);
 
 DEFINE_RESERVE_MEM_BLOCK(RESERVE_FUNCTIONS, A_FUNCTIONS);
+DEFINE_RESERVE_MEM_BLOCK(RESERVE_SEFUN_STRUCT_DEFS, A_SEFUN_STRUCT_DEFS);
 DEFINE_RESERVE_MEM_BLOCK(RESERVE_UPDATE_INDEX_MAP, A_UPDATE_INDEX_MAP);
 DEFINE_RESERVE_MEM_BLOCK(RESERVE_INHERITS, A_INHERITS);
 DEFINE_RESERVE_MEM_BLOCK(RESERVE_DEFAULT_VALUE_POS, A_DEFAULT_VALUES_POSITION);
@@ -1653,7 +1671,7 @@ get_lpctype_name_buf (lpctype_t *type, char *buf, size_t bufsize)
             }
             else // no struct
             {
-                snprintf(buf, bufsize, "unknown struct");
+                snprintf(buf, bufsize, "struct mixed");
                 return strlen(buf);
             }
 
@@ -2991,6 +3009,60 @@ check_visibility_flags (funflag_t flags, funflag_t default_vis, bool function)
 } /* check_visibility_flags() */
 
 /*-------------------------------------------------------------------------*/
+static funflag_t
+combine_visibility_flags (funflag_t orig, funflag_t add)
+
+/* Combines visibility flags of two occurrences (eg. an element inherited
+ * twice with different visibility). Any other non-visibility flags in
+ * <orig> will be kept intact.
+ */
+
+{
+    if ((orig|add) & TYPE_MOD_PUBLIC)
+    {
+        orig &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED | NAME_HIDDEN);
+        orig |= TYPE_MOD_PUBLIC;
+    }
+    else if (!(add&(TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED)))
+    {
+        orig &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED | NAME_HIDDEN);
+    }
+    else if (!(orig&(TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED)))
+    {
+        /* It's already visible. */
+    }
+    else if (add & TYPE_MOD_PROTECTED)
+    {
+        orig &= ~(TYPE_MOD_PRIVATE | NAME_HIDDEN);
+        orig |= TYPE_MOD_PROTECTED;
+    }
+
+    return orig;
+} /* combine_visibility_flags() */
+
+/*-------------------------------------------------------------------------*/
+static funflag_t
+inherit_visibility_flags (funflag_t orig, funflag_t modifier)
+
+/* Calculates the resulting visibility when inheriting an element with <orig>
+ * visibility and applying the visibility modifier <modifier>.
+ */
+
+{
+    if (orig & TYPE_MOD_PUBLIC)
+        modifier &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED);
+    else if (orig & TYPE_MOD_PRIVATE)
+        orig |= NAME_HIDDEN;
+    orig |= modifier;
+    if (orig & (TYPE_MOD_PRIVATE | NAME_HIDDEN))
+        orig &= ~(TYPE_MOD_PROTECTED | TYPE_MOD_PUBLIC);
+    else if (orig & TYPE_MOD_PROTECTED)
+        orig &= ~(TYPE_MOD_PUBLIC);
+
+    return orig;
+} /* inherit_visibility_flags() */
+
+/*-------------------------------------------------------------------------*/
 static INLINE void
 i_add_arg_type (fulltype_t type)
 
@@ -3332,7 +3404,7 @@ ins_uint32 (uint32_t l)
                 , CURRENT_PROGRAM_SIZE + sizeof(uint32_t));
     }
  } // ins_uint32()
-#endif // FLOAT_FORMAT_2
+#else
 /*-------------------------------------------------------------------------*/
 static void
 ins_double (double d)
@@ -3350,6 +3422,7 @@ ins_double (double d)
                  , CURRENT_PROGRAM_SIZE + sizeof(double));
     }
 } /* ins_double() */
+#endif // FLOAT_FORMAT_2
 /*-------------------------------------------------------------------------*/
 static void upd_uint32 (bc_offset_t offset, uint32_t l) UNUSED;
 static void
@@ -4612,6 +4685,45 @@ store_argument_types ( int num_arg )
 } /* store_argument_types() */
 
 /*-------------------------------------------------------------------------*/
+static ident_t *
+add_global_name (ident_t *name)
+
+/* Creates a global identifier for <name> or returns <name> if it already is
+ * a global identifier.
+ */
+
+{
+    switch (name->type)
+    {
+        default:
+            /* Create a new identifier. */
+            name = make_shared_identifier_mstr(name->name, I_TYPE_GLOBAL, 0);
+            /* FALLTHROUGH */
+        case I_TYPE_UNKNOWN:
+            /* We can adapt this identifier. */
+            init_global_identifier(name, true);
+            name->next_all = all_globals;
+            all_globals = name;
+            return name;
+
+        case I_TYPE_GLOBAL:
+            /* If this is a driver-global identifier, remember this as shadowed,
+             * if we haven't done this already.
+             */
+            if (name->u.global.variable == I_GLOBAL_VARIABLE_WORLDWIDE)
+            {
+                efun_shadow_t *sh = xalloc(sizeof(efun_shadow_t));
+                sh->shadow = name;
+                sh->next = all_efun_shadows;
+                all_efun_shadows = sh;
+
+                name->u.global.variable = I_GLOBAL_VARIABLE_OTHER;
+            }
+            return name;
+    }
+} /* add_global_name() */
+
+/*-------------------------------------------------------------------------*/
 static int
 define_new_function ( Bool complete, ident_t *p, int num_arg, int num_local
                     , p_int offset, funflag_t flags, fulltype_t type)
@@ -5032,39 +5144,7 @@ define_new_function ( Bool complete, ident_t *p, int num_arg, int num_local
 
     num = FUNCTION_COUNT;
 
-    if (p->type != I_TYPE_GLOBAL)
-    {
-        /* This is the first _GLOBAL use of this identifier:
-         * make an appropriate entry in the identifier table.
-         */
-
-        if (p->type != I_TYPE_UNKNOWN)
-        {
-            /* The ident has been used before otherwise, so
-             * get a fresh structure.
-             */
-            p = make_shared_identifier_mstr(p->name, I_TYPE_GLOBAL, 0);
-        }
-        /* should be I_TYPE_UNKNOWN now. */
-
-        init_global_identifier(p, /* bVariable: */ MY_TRUE);
-        p->next_all = all_globals;
-        all_globals = p;
-    }
-    else if (p->u.global.variable == I_GLOBAL_VARIABLE_FUN)
-    {
-        /* The previous _GLOBAL use is the permanent efun definition:
-         * mark the efun as shadowed.
-         */
-        efun_shadow_t *q;
-
-        q = xalloc(sizeof(efun_shadow_t));
-        q->shadow = p;
-        q->next = all_efun_shadows;
-        all_efun_shadows = q;
-    }
-    /* else: Other cases don't need special treatment */
-
+    p = add_global_name(p);
     p->u.global.function = num;
 
     /* Store the function_t in the functions area */
@@ -5149,44 +5229,7 @@ define_variable (ident_t *name, fulltype_t type)
                 , get_txt(name->name));
     }
 
-    if (name->type != I_TYPE_GLOBAL)
-    {
-        /* This is the first _GLOBAL use of this identifier:
-         * make an appropriate entry in the identifier table.
-         */
-
-        if (name->type != I_TYPE_UNKNOWN)
-        {
-            /* The ident has been used before otherwise, so
-             * get a fresh structure.
-             */
-            name = make_shared_identifier_mstr(name->name, I_TYPE_GLOBAL, 0);
-        }
-
-        init_global_identifier(name, /* bVariable: */ MY_TRUE);
-        name->next_all = all_globals;
-        all_globals = name;
-    }
-    else if (name->u.global.function == I_GLOBAL_FUNCTION_OTHER
-          && (name->u.global.efun != I_GLOBAL_EFUN_OTHER
-           || name->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER
-#ifdef USE_PYTHON
-           || is_python_efun(name)
-#endif
-             )
-            )
-    {
-        /* The previous _GLOBAL use is the permanent efun definition:
-         * mark the efun as shadowed.
-         */
-        efun_shadow_t *q;
-
-        q = xalloc(sizeof(efun_shadow_t));
-        q->shadow = name;
-        q->next = all_efun_shadows;
-        all_efun_shadows = q;
-    }
-
+    name = add_global_name(name);
     /* Prepare the new variable_t */
 
     if (flags & TYPE_MOD_NOSAVE)
@@ -5198,7 +5241,7 @@ define_variable (ident_t *name, fulltype_t type)
 
     /* If the variable already exists, make sure that we can redefine it */
     n = name->u.global.variable;
-    if (n != I_GLOBAL_VARIABLE_OTHER && n != I_GLOBAL_VARIABLE_FUN)
+    if (n != I_GLOBAL_VARIABLE_OTHER && n != I_GLOBAL_VARIABLE_WORLDWIDE)
     {
         typeflags_t vn_flags = VARIABLE(n)->type.t_flags;
 
@@ -5254,47 +5297,7 @@ redeclare_variable (ident_t *name, fulltype_t type, int n)
     typeflags_t varflags;
     variable_t *variable;
 
-    if (name->type != I_TYPE_GLOBAL)
-    {
-        /* This is the first _GLOBAL use of this identifier:
-         * make an appropriate entry in the identifier table.
-         */
-
-        if (name->type != I_TYPE_UNKNOWN)
-        {
-            /* The ident has been used before otherwise, so
-             * get a fresh structure.
-             */
-            name = make_shared_identifier_mstr(name->name, I_TYPE_GLOBAL, 0);
-        }
-
-        init_global_identifier(name, /* bVariable: */ MY_TRUE);
-        name->next_all = all_globals;
-        all_globals = name;
-    }
-    else if (name->u.global.function == I_GLOBAL_FUNCTION_OTHER
-          && (name->u.global.efun != I_GLOBAL_EFUN_OTHER
-           || name->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER
-#ifdef USE_PYTHON
-           || is_python_efun(name)
-#endif
-             )
-            )
-    {
-        /* The previous _GLOBAL use is the permanent efun definition:
-         * mark the efun as shadowed.
-         */
-        efun_shadow_t *q;
-
-        q = xalloc(sizeof(efun_shadow_t));
-        q->shadow = name;
-
-        q->next = all_efun_shadows;
-        all_efun_shadows = q;
-    }
-    /* else: the variable is inherited after it has been defined
-     * in the child program.
-     */
+    name = add_global_name(name);
 
     /* The variable is hidden, do nothing else */
     if (flags & NAME_HIDDEN)
@@ -5308,7 +5311,7 @@ redeclare_variable (ident_t *name, fulltype_t type, int n)
     }
 
     if (name->u.global.variable != I_GLOBAL_VARIABLE_OTHER
-     && name->u.global.variable != I_GLOBAL_VARIABLE_FUN
+     && name->u.global.variable != I_GLOBAL_VARIABLE_WORLDWIDE
      && name->u.global.variable != n)
     {
         check_variable_redefinition(name, flags);
@@ -5323,24 +5326,7 @@ redeclare_variable (ident_t *name, fulltype_t type, int n)
     assert(variable->type.t_type == type.t_type);
 
     /* The most visible modifier wins here. */
-    if ((flags|varflags) & TYPE_MOD_PUBLIC)
-    {
-        varflags &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED | NAME_HIDDEN);
-        varflags |= TYPE_MOD_PUBLIC;
-    }
-    else if (!(flags&(TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED)))
-    {
-        varflags &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED | NAME_HIDDEN);
-    }
-    else if (!(varflags&(TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED)))
-    {
-        /* It's already visible. */
-    }
-    else if (flags & TYPE_MOD_PROTECTED)
-    {
-        varflags &= ~(TYPE_MOD_PRIVATE | NAME_HIDDEN);
-        varflags |= TYPE_MOD_PROTECTED;
-    }
+    varflags = combine_visibility_flags(varflags, flags);
 
     /* Preserve nosave only, if both of them have it. */
     if (!(flags & varflags & TYPE_MOD_STATIC))
@@ -5381,7 +5367,7 @@ get_initialized_variable (ident_t *p)
 
             case I_TYPE_GLOBAL:
                 if (result->u.global.variable != I_GLOBAL_VARIABLE_OTHER
-                 && result->u.global.variable != I_GLOBAL_VARIABLE_FUN)
+                 && result->u.global.variable != I_GLOBAL_VARIABLE_WORLDWIDE)
                 {
                     if (global_variable_initializing == result)
                         foundinitializing = true;
@@ -5452,12 +5438,16 @@ define_global_variable (ident_t* name, fulltype_t actual_type, Bool with_init)
         /* If this is the first variable initialization and
          * pragma_share_variables is in effect, insert
          * the check for blueprint/clone initialisation:
-         *    if (clonep(this_object())) return 1;
+         *    if (clonep(this_object()) || lwobjectp(this_object()) return 1;
          */
         if (!variables_initialized && pragma_share_variables)
         {
             ins_f_code(F_THIS_OBJECT);
             ins_f_code(F_CLONEP);
+            ins_f_code(F_BRANCH_WHEN_NON_ZERO);
+            ins_byte(4);
+            ins_f_code(F_THIS_OBJECT);
+            ins_f_code(F_LWOBJECTP);
             ins_f_code(F_BRANCH_WHEN_ZERO);
             ins_byte(2);
             ins_f_code(F_CONST1);
@@ -5660,7 +5650,7 @@ def_function_typecheck (fulltype_t returntype, ident_t * ident, Bool is_inline)
     if (ident->type == I_TYPE_UNKNOWN)
     {
         /* prevent freeing by exotic name clashes */
-        init_global_identifier(ident, /* bVariable: */ MY_TRUE);
+        init_global_identifier(ident, /* bProgram: */ true);
         ident->next_all = all_globals;
         all_globals = ident;
     }
@@ -6004,11 +5994,14 @@ copy_default_value_block (int num_opt, p_int offset, p_int start, size_t size)
 
 /*-------------------------------------------------------------------------*/
 static int
-define_new_struct ( Bool proto, ident_t *p, const char * prog_name, funflag_t flags)
+define_struct (bool proto, ident_t *p, const char * prog_name, funflag_t flags, struct_type_t *stype)
 
 /* Define a new struct <p> with the visibility <flags>.
  * If <proto> is TRUE, the function is called for a struct forward
  * declaration; if <proto> is FALSE, the struct is about to be defined.
+ *
+ * <stype> points to an already existing definition (i.e. an inherited one),
+ * otherwise (for new definitions) it is NULL. The reference is not adopted.
  *
  * Result is the index (id) of the struct in the struct_defs table.
  * If the struct would be a duplicate, -1 is returned instead of the index.
@@ -6016,20 +6009,32 @@ define_new_struct ( Bool proto, ident_t *p, const char * prog_name, funflag_t fl
  * If a prototype is encountered, the struct definition is stored
  * with an additional visibility flag of NAME_PROTOTYPE.
  *
- * If NAME_HIDDEN is set in flags, the struct is added to the program
- * but no visibility checks occur - this is for inherited structs
- * which are no longer visible, but have to be kept in order to
- * keep the struct ids intact.
+ * This function should only be called for visible definitions.
  */
 
 {
     int          num;
     struct_def_t sdef;
+    lpctype_t *  type;
+
+    assert(!(flags & NAME_HIDDEN));
+    assert(!proto || stype == NULL);
+
+    /* Check visibility flags. */
+    flags = check_visibility_flags(flags, default_structmod, false);
+    if (flags & TYPE_MOD_STATIC)
+    {
+        yyerror("Can't declare a struct as static");
+        flags &= ~TYPE_MOD_STATIC;
+    }
+    if (flags & TYPE_MOD_VARARGS)
+    {
+        yyerror("Can't declare a struct as varargs");
+        flags &= ~TYPE_MOD_VARARGS;
+    }
 
     /* If this is a redeclaration, check for consistency. */
-    if (p->type == I_TYPE_GLOBAL && (num = p->u.global.struct_id) != I_GLOBAL_STRUCT_NONE
-     && !(flags & NAME_HIDDEN)
-      )
+    if (p->type == I_TYPE_GLOBAL && (num = p->u.global.struct_id) != I_GLOBAL_STRUCT_NONE)
     {
         struct_def_t *pdef;
 
@@ -6042,14 +6047,8 @@ define_new_struct ( Bool proto, ident_t *p, const char * prog_name, funflag_t fl
             ( TYPE_MOD_NO_MASK \
             | TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC \
             | TYPE_MOD_PROTECTED)
-            funflag_t f1 = pdef->flags;
-            funflag_t f2 = flags;
 
-            /* Smooth out irrelevant differences */
-            if (f1 & TYPE_MOD_STATIC) f1 |= TYPE_MOD_PROTECTED;
-            if (f2 & TYPE_MOD_STATIC) f2 |= TYPE_MOD_PROTECTED;
-
-            if ( ((f1 ^ f2) & TYPE_MOD_VIS) )
+            if ( ((pdef->flags ^ flags) & TYPE_MOD_VIS) )
             {
                 char buff[120];
 
@@ -6085,80 +6084,133 @@ define_new_struct ( Bool proto, ident_t *p, const char * prog_name, funflag_t fl
         return num;
     }
 
-    /* This is a new struct! */
-    flags = check_visibility_flags(flags, 0, false);
-    if (flags & TYPE_MOD_STATIC)
-    {
-        yyerror("Can't declare a struct as static");
-        flags &= ~TYPE_MOD_STATIC;
-    }
-    if (flags & TYPE_MOD_VARARGS)
-    {
-        yyerror("Can't declare a struct as varargs");
-        flags &= ~TYPE_MOD_VARARGS;
-    }
-
-    /* Fill in the struct_def_t */
-    sdef.type  = struct_new_prototype(ref_mstring(p->name)
-                                    , new_unicode_tabled(prog_name));
+    /* This is a new struct!
+     *
+     * Fill in the struct_def_t.
+     */
+    if (stype)
+        sdef.type = ref_struct_type(stype);
+    else
+        sdef.type = struct_new_prototype(ref_mstring(p->name)
+                                       , new_unicode_tabled(prog_name));
     sdef.flags = proto ? (flags | NAME_PROTOTYPE)
                        : (flags & ~NAME_PROTOTYPE);
-    sdef.inh = -1;
-
-    update_struct_type(sdef.type->name->lpctype, sdef.type);
+    sdef.inh = STRUCT_INH_LOCAL;
 
     num = STRUCT_COUNT;
 
-    if (p->type != I_TYPE_GLOBAL)
-    {
-        /* This is the first _GLOBAL use of this identifier:
-         * make an appropriate entry in the identifier table.
-         */
+    p = add_global_name(p);
+    p->u.global.struct_id = num;
 
-        if (p->type != I_TYPE_UNKNOWN)
-        {
-            /* The ident has been used before otherwise, so
-             * get a fresh structure.
-             */
-            p = make_shared_identifier_mstr(p->name, I_TYPE_GLOBAL, 0);
-        }
-        /* should be I_TYPE_UNKNOWN now. */
-
-        init_global_identifier(p, /* bVariable: */ MY_FALSE);
-        p->next_all = all_globals;
-        all_globals = p;
-    }
-
-    if  (!(flags & NAME_HIDDEN))
-        p->u.global.struct_id = num;
-
-    /* Store the function_t in the functions area */
+    /* Store the definition in the struct area */
     ADD_STRUCT_DEF(&sdef);
 
+    /* We keep this reference until the end of compilation. */
+    type = get_struct_type(sdef.type);
+
+    update_struct_type(type, sdef.type);
+    type->t_struct.def_idx = num;
+
     return num;
-} /* define_new_struct() */
+} /* define_struct() */
 
 /*-------------------------------------------------------------------------*/
 static int
-find_struct ( string_t * name )
+find_struct ( ident_t * name, efun_override_t override )
 
 /* Find the struct <name> and return its index. Return -1 if not found.
+ * <override> descibes whether to look at local (OVERRIDE_LFUN) or
+ * simul-efun (OVERRIDE_SEFUN) structs only.
  */
 
 {
-    ident_t * p;
-
-    p = find_shared_identifier_mstr(name, I_TYPE_GLOBAL, 0);
-
     /* Find the global struct identifier */
-    while (p != NULL && p->type != I_TYPE_GLOBAL)
-        p = p->inferior;
+    while (name != NULL && name->type != I_TYPE_GLOBAL)
+        name = name->inferior;
 
-    if (p == NULL || p->u.global.struct_id == I_GLOBAL_STRUCT_NONE)
+    if (name == NULL)
         return -1;
-    if (STRUCT_DEF(p->u.global.struct_id).flags & NAME_HIDDEN)
-        return -1;
-    return p->u.global.struct_id;
+
+    switch (override)
+    {
+        default:
+        case OVERRIDE_LFUN:
+            if (name->u.global.struct_id != I_GLOBAL_STRUCT_NONE
+             && !(STRUCT_DEF(name->u.global.struct_id).flags & NAME_HIDDEN))
+                return name->u.global.struct_id;
+
+            if (override == OVERRIDE_LFUN)
+                break;
+            /* else FALLTHROUGH */
+
+        case OVERRIDE_SEFUN:
+            if (name->u.global.sefun_struct_id != I_GLOBAL_SEFUN_STRUCT_NONE && !pragma_no_simul_efuns)
+            {
+                unsigned short sefun_id = name->u.global.sefun_struct_id;
+                unsigned short id = (sefun_id < SEFUN_STRUCT_DEF_COUNT) ? SEFUN_STRUCT_DEF(sefun_id) : USHRT_MAX;
+                if (id == USHRT_MAX)
+                {
+                    struct_type_t *stype;
+                    lpctype_t *lpctype;
+                    struct_def_t sdef;
+                    unsigned short count = SEFUN_STRUCT_DEF_COUNT;
+                    if (sefun_id >= count)
+                    {
+                        /* Fill up the A_SEFUN_STRUCT_DEFS block. */
+                        RESERVE_SEFUN_STRUCT_DEFS(sefun_id - count);
+                        for(; count <= sefun_id; count++)
+                            ADD_SEFUN_STRUCT_DEF(USHRT_MAX);
+                    }
+
+                    /* Let's see if we already got this struct somehow. */
+                    stype = simul_efun_object->prog->struct_defs[sefun_id].type;
+                    lpctype = get_struct_type(stype);
+
+                    id = lpctype->t_struct.def_idx;
+                    if (id != USHRT_MAX && STRUCT_DEF(id).type == stype)
+                    {
+                        free_lpctype(lpctype);
+                        SEFUN_STRUCT_DEF(sefun_id) = id;
+                        return id;
+                    }
+
+                    for (unsigned short i = 0; i < STRUCT_COUNT; i++)
+                    {
+                        if (STRUCT_DEF(i).type == stype)
+                        {
+                            free_lpctype(lpctype);
+                            SEFUN_STRUCT_DEF(sefun_id) = id;
+                            return id;
+                        }
+                    }
+
+                    /* Add this as a hidden struct to our program. */
+                    id = STRUCT_COUNT;
+                    if (id == USHRT_MAX)
+                    {
+                        /* Not enough space to do so. */
+                        free_lpctype(lpctype);
+                        return -1;
+                    }
+
+                    sdef.type = ref_struct_type(stype);
+                    sdef.flags = NAME_HIDDEN;
+                    sdef.inh = STRUCT_INH_SEFUN;
+
+                    ADD_STRUCT_DEF(&sdef);
+                    SEFUN_STRUCT_DEF(sefun_id) = id;
+                    lpctype->t_struct.def_idx = id;
+                    /* Note we keep the reference of lpctype
+                     * for epilog() to free it.
+                     */
+                }
+
+                return id;
+            }
+            break;
+    }
+
+    return -1;
 } /* find_struct() */
 
 /*-------------------------------------------------------------------------*/
@@ -6458,21 +6510,41 @@ create_struct_literal ( struct_def_t * pdef, int length, struct_init_t * list)
 
 /*-------------------------------------------------------------------------*/
 static short
-get_struct_index (struct_name_t * pName)
+get_struct_index (lpctype_t* stype)
 
-/* Return the index of struct name <pName> in this program's A_STRUCT_DEFS.
+/* Return the index of struct <stype> in this program's A_STRUCT_DEFS.
  * Return -1 if not found.
  */
 
 {
-    short i;
-
-    for (i = 0; (size_t)i < STRUCT_COUNT; i++)
+    unsigned short idx = stype->t_struct.def_idx;
+    if (idx == USHRT_MAX)
     {
-        if (STRUCT_DEF(i).type->name == pName)
-            return i;
+        struct_def_t sdef;
+
+        /* Do we know the exact definition from the name? */
+        if (stype->t_struct.def == NULL)
+            return -1;
+
+        /* Add this as a hidden struct to our program. */
+        idx = STRUCT_COUNT;
+        if (idx == USHRT_MAX)
+            return -1; /* Not enough space to do so. */
+
+        sdef.type = stype->t_struct.def;
+        sdef.flags = NAME_HIDDEN;
+        sdef.inh = STRUCT_INH_USAGE;
+
+        ADD_STRUCT_DEF(&sdef);
+        ref_lpctype(stype); /* Epilog will free this. */
+        stype->t_struct.def_idx = idx;
+        return idx;
     }
-    return -1;
+
+    assert(idx < STRUCT_COUNT);
+    assert(STRUCT_DEF(idx).type->name == stype->t_struct.name);
+
+    return idx;
 } /* get_struct_index() */
 
 /*-------------------------------------------------------------------------*/
@@ -6596,6 +6668,18 @@ get_struct_member_result_type (lpctype_t* structure, string_t* member_name, bool
             break;
 
         case TCLASS_STRUCT:
+            if (!unionmember->t_struct.name)
+            {
+                /* For any struct we can only do runtime lookup. */
+                *struct_index = FSM_AMBIGUOUS;
+                *member_index = -1;
+                fstruct = NULL;
+
+                /* Also we cannot guess the type. */
+                free_lpctype(result);
+                return lpctype_mixed;
+            }
+            else
             {
                 struct_type_t *pdef = unionmember->t_struct.def;
                 if (pdef == NULL)
@@ -6617,7 +6701,7 @@ get_struct_member_result_type (lpctype_t* structure, string_t* member_name, bool
                 {
                     case FSM_NO_STRUCT:
                         fstruct = pdef;
-                        *struct_index = get_struct_index(fstruct->name);
+                        *struct_index = get_struct_index(unionmember);
                         *member_index = midx;
                         if (*struct_index == -1)
                         {
@@ -6637,7 +6721,7 @@ get_struct_member_result_type (lpctype_t* structure, string_t* member_name, bool
                         if (struct_baseof(pdef, fstruct))
                         {
                             fstruct = pdef;
-                            *struct_index = get_struct_index(fstruct->name);
+                            *struct_index = get_struct_index(unionmember);
                             *member_index = midx;
                             break;
                         }
@@ -6705,6 +6789,36 @@ get_struct_member_result_type (lpctype_t* structure, string_t* member_name, bool
 
 /*-------------------------------------------------------------------------*/
 static void
+record_struct_type (lpctype_t *t)
+
+/* Put all struct types in <t> into the struct definition blocks, so
+ * any inheriting programs have access to the definitions.
+ */
+
+{
+    lpctype_t *head = t;
+    while (true)
+    {
+        lpctype_t *member = head->t_class == TCLASS_UNION ? head->t_union.member : head;
+
+        if (member->t_class == TCLASS_STRUCT)
+        {
+            // If there is 'struct mixed' in there, there won't be another struct.
+            if (!member->t_struct.name)
+                break;
+
+            (void)get_struct_index(member);
+        }
+
+        if (head->t_class == TCLASS_UNION)
+            head = head->t_union.head;
+        else
+            break;
+    }
+} /* record_struct_type() */
+
+/*-------------------------------------------------------------------------*/
+static void
 struct_epilog (void)
 
 /* After a successful parse, make sure that all structs are defined,
@@ -6737,7 +6851,7 @@ struct_epilog (void)
         struct_type_t *pSType = STRUCT_DEF(i).type;
         struct_type_t *pOld;
 
-        if (STRUCT_DEF(i).inh >= 0)
+        if (STRUCT_DEF(i).inh != STRUCT_INH_LOCAL)
             continue;
 
         pOld = struct_lookup_type(pSType);
@@ -6762,10 +6876,30 @@ struct_epilog (void)
      */
     for (i = 0; (size_t)i < STRUCT_COUNT; i++)
     {
-        if (STRUCT_DEF(i).inh < 0)
+        if (STRUCT_DEF(i).inh == STRUCT_INH_LOCAL)
             struct_publish_type(STRUCT_DEF(i).type);
     } /* for(i) */
 
+    /* For all non-private function and variables add their struct type
+     * to our definitions if there aren't there, yet.
+     */
+    for (i = 0; i < FUNCTION_COUNT; i++)
+    {
+        if (!(FUNCTION(i)->flags & (TYPE_MOD_PRIVATE | NAME_HIDDEN)))
+            record_struct_type(FUNCTION(i)->type);
+    }
+    for (i = 0; i < V_VARIABLE_COUNT; i++)
+    {
+        fulltype_t vartype = V_VARIABLE(i | VIRTUAL_VAR_TAG)->type;
+        if (!(vartype.t_flags & (TYPE_MOD_PRIVATE | NAME_HIDDEN)))
+            record_struct_type(vartype.t_type);
+    }
+    for (i = 0; i < NV_VARIABLE_COUNT; i++)
+    {
+        fulltype_t vartype = NV_VARIABLE(i)->type;
+        if (!(vartype.t_flags & (TYPE_MOD_PRIVATE | NAME_HIDDEN)))
+            record_struct_type(vartype.t_type);
+    }
 } /* struct_epilog() */
 
 
@@ -7656,10 +7790,12 @@ delete_prog_string (void)
       /* An LPC type without modifiers.
        */
 
-    funflag_t inh_flags[2];
-      /* Inheritance: [0]: code inheritance qualifiers
-       *              [1]: variable inheritance qualifiers
-       */
+    struct
+    {
+        funflag_t funmod;       /* Function inheritance modifiers. */
+        funflag_t varmod;       /* Variable inheritance modifiers. */
+        funflag_t structmod;    /* Struct inheritance modifiers.   */
+    } inh_flags;
 
     svalue_t *initialized;
       /* Position where to store the variable initializer.
@@ -7895,6 +8031,12 @@ delete_prog_string (void)
        */
 
     struct {
+        efun_override_t override; /* Qualifier for name lookup. */
+        ident_t *real;            /* The struct identifier */
+    } struct_name;
+      /* A qualified struct name: "<super>::<name>" */
+
+    struct {
         int length;            /* Number of initializers parsed */
         /* Description of initializers parsed: */
         struct struct_init_s * list;  /* Head of list */
@@ -7965,7 +8107,7 @@ delete_prog_string (void)
 %type <lvalue>       lvalue name_lvalue name_var_lvalue local_name_lvalue foreach_var_lvalue lvalue_reference
 %type <foreach_variables> foreach_vars
 %type <foreach_expression> foreach_expr
-%type <index>        index_range index_expr
+%type <index>        index_range index_map_range index_expr index_map_expr
 %type <case_label>   case_label
 %type <else_block>   optional_else
 %type <string>       anchestor
@@ -7976,6 +8118,7 @@ delete_prog_string (void)
 %type <sh_string>    struct_member_name
 %type <function_name> function_name
 %type <function_call_result> function_call
+%type <struct_name>  struct_name
 %type <struct_member_operator> member_operator
 
 /* Special uses of <number> */
@@ -8670,7 +8813,7 @@ struct_decl:
       type_modifier_list L_STRUCT L_IDENTIFIER ';'
       {
           check_identifier($3);
-          (void)define_new_struct(MY_TRUE, $3, compiled_file, $1);
+          (void)define_struct(true, $3, compiled_file, $1, NULL);
       }
     | type_modifier_list L_STRUCT L_IDENTIFIER
       {
@@ -8688,7 +8831,7 @@ struct_decl:
           }
           mem_block[A_STRUCT_MEMBERS].current_size = 0;
 
-          current_struct = define_new_struct(MY_FALSE, $3, compiled_file, $1);
+          current_struct = define_struct(false, $3, compiled_file, $1, NULL);
           if (current_struct < 0)
               YYACCEPT;
       }
@@ -8823,26 +8966,45 @@ inheritance:
            * A variable 'nosave' inherit is internally stored as 'static',
            * a functions 'nosave' inherit is not allowed.
            */
-          if ($1[1] & TYPE_MOD_NOSAVE)
+          if ($1.varmod & TYPE_MOD_NOSAVE)
           {
-              $1[1] |= TYPE_MOD_STATIC;
-              $1[1] ^= TYPE_MOD_NOSAVE;
+              $1.varmod |= TYPE_MOD_STATIC;
+              $1.varmod ^= TYPE_MOD_NOSAVE;
           }
 
-          if ($1[0] & TYPE_MOD_NOSAVE)
+          if ($1.funmod & TYPE_MOD_NOSAVE)
           {
-              $1[0] ^= TYPE_MOD_NOSAVE;
+              $1.funmod ^= TYPE_MOD_NOSAVE;
               yyerror("illegal to inherit code as 'nosave'");
           }
 
-          if ($1[1] & TYPE_MOD_VARARGS)
+          if ($1.varmod & TYPE_MOD_VARARGS)
           {
-              $1[1] ^= TYPE_MOD_VARARGS;
+              $1.varmod ^= TYPE_MOD_VARARGS;
               yyerror("illegal to inherit variables as 'varargs'");
           }
 
-          $1[0] = check_visibility_flags($1[0], 0, true);
-          $1[1] = check_visibility_flags($1[1], 0, false);
+          if ($1.structmod & TYPE_MOD_NOSAVE)
+          {
+              $1.structmod ^= TYPE_MOD_NOSAVE;
+              yyerror("illegal to inherit structs as 'nosave'");
+          }
+
+          if ($1.structmod & TYPE_MOD_STATIC)
+          {
+              $1.structmod ^= TYPE_MOD_STATIC;
+              yyerror("illegal to inherit structs as 'static'");
+          }
+
+          if ($1.structmod & TYPE_MOD_VARARGS)
+          {
+              $1.structmod ^= TYPE_MOD_VARARGS;
+              yyerror("illegal to inherit structs as 'varargs'");
+          }
+
+          $1.funmod = check_visibility_flags($1.funmod, 0, true);
+          $1.varmod = check_visibility_flags($1.varmod, 0, false);
+          $1.structmod = check_visibility_flags($1.structmod, 0, false);
 
           /* First, try to call master->inherit_file().
            * Since simulate::load_object() makes sure that the master has been
@@ -8973,7 +9135,7 @@ inheritance:
           /* Copy the functions and variables, and take
            * care of the initializer.
            */
-          int initializer = inherit_program(ob->prog, $1[0], $1[1]);
+          int initializer = inherit_program(ob->prog, $1.funmod, $1.varmod, $1.structmod);
           if (initializer > -1)
           {
               /* We inherited a __INIT() function: create a call */
@@ -9000,21 +9162,23 @@ inheritance_qualifiers:
 
       inheritance_modifier_list
       {
-          $$[0] = $$[1] = $1;
+          $$.funmod = $$.varmod = $$.structmod = $1;
 
           /* Allow 'static nosave inherit foo' as the short form
            * of 'static functions nosave variables inherit foo'; meaning
            * that we have to prevent the qualifier test in the
            * inheritance rule from triggering.
            */
-          $$[0] &= ~TYPE_MOD_NOSAVE;
-          $$[1] &= ~TYPE_MOD_VARARGS;
+          $$.funmod &= ~TYPE_MOD_NOSAVE;
+          $$.varmod &= ~TYPE_MOD_VARARGS;
+          $$.structmod &= ~(TYPE_MOD_STATIC|TYPE_MOD_NOSAVE|TYPE_MOD_VARARGS|TYPE_MOD_VIRTUAL);
       }
 
     | inheritance_qualifier inheritance_qualifiers
       {
-          $$[0] = $1[0] | $2[0];
-          $$[1] = $1[1] | $2[1];
+          $$.funmod = $1.funmod | $2.funmod;
+          $$.varmod = $1.varmod | $2.varmod;
+          $$.structmod = ($1.structmod | $2.structmod) & ~TYPE_MOD_VIRTUAL;
       }
 ; /* inheritance_qualifiers */
 
@@ -9066,7 +9230,7 @@ inheritance_qualifier:
                   if ($2 == last_identifier)
                   {
                       last_identifier = NULL;
-                      $$[0] = $$[1] = 0;
+                      $$.funmod = $$.varmod = $$.structmod = 0;
                       break;
                   }
               }
@@ -9080,19 +9244,27 @@ inheritance_qualifier:
               /* The L_IDENTIFIER must be one of "functions" or "variables" */
               if (mstreq(last_identifier->name, STR_FUNCTIONS))
               {
-                    $$[0] = last_modifier;
-                    $$[1] = 0;
+                    $$.funmod = last_modifier;
+                    $$.varmod = 0;
+                    $$.structmod = 0;
               }
               else if (mstreq(last_identifier->name, STR_VARIABLES))
               {
-                    $$[0] = 0;
-                    $$[1] = last_modifier;
+                    $$.funmod = 0;
+                    $$.varmod = last_modifier;
+                    $$.structmod = 0;
+              }
+              else if (mstreq(last_identifier->name, STR_STRUCTS))
+              {
+                    $$.funmod = 0;
+                    $$.varmod = 0;
+                    $$.structmod = last_modifier;
               }
               else
               {
                   yyerrorf("Unrecognized inheritance modifier '%s'"
                           , get_txt(last_identifier->name));
-                  $$[0] = $$[1] = 0;
+                  $$.funmod = $$.varmod = $$.structmod = 0;
               }
           } while(0);
       }
@@ -9108,8 +9280,8 @@ inheritance_qualifier:
 default_visibility:
     L_DEFAULT inheritance_qualifiers ';'
       {
-          if ($2[0] & ~( TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC | TYPE_MOD_VISIBLE
-                       | TYPE_MOD_PROTECTED | TYPE_MOD_STATIC | TYPE_MOD_DEPRECATED)
+          if ($2.funmod & ~( TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC | TYPE_MOD_VISIBLE
+                           | TYPE_MOD_PROTECTED | TYPE_MOD_STATIC | TYPE_MOD_DEPRECATED)
              )
           {
               yyerror("Default visibility specification for functions "
@@ -9118,8 +9290,8 @@ default_visibility:
               YYACCEPT;
           }
 
-          if ($2[1] & ~( TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC | TYPE_MOD_VISIBLE
-                       | TYPE_MOD_PROTECTED | TYPE_MOD_DEPRECATED)
+          if ($2.varmod & ~( TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC | TYPE_MOD_VISIBLE
+                           | TYPE_MOD_PROTECTED | TYPE_MOD_DEPRECATED)
              )
           {
               yyerror("Default visibility specification for variables "
@@ -9129,8 +9301,20 @@ default_visibility:
               YYACCEPT;
           }
 
-          default_funmod = check_visibility_flags($2[0], 0, true);
-          default_varmod = check_visibility_flags($2[1], 0, false);
+          if ($2.structmod & ~( TYPE_MOD_PRIVATE | TYPE_MOD_PUBLIC | TYPE_MOD_VISIBLE
+                              | TYPE_MOD_PROTECTED | TYPE_MOD_DEPRECATED)
+             )
+          {
+              yyerror("Default visibility specification for structs "
+                      "accepts only 'private', 'protected', 'visible', 'public' "
+                      "or 'deprecated'"
+                      );
+              YYACCEPT;
+          }
+
+          default_funmod = check_visibility_flags($2.funmod, 0, true);
+          default_varmod = check_visibility_flags($2.varmod, 0, false);
+          default_structmod = check_visibility_flags($2.structmod, 0, false);
       }
 ; /* default_visibility */
 
@@ -9221,22 +9405,24 @@ single_basic_non_void_type:
           free_mstring(last_string_constant);
           last_string_constant = NULL;
       }
-    | L_STRUCT identifier
+    | L_STRUCT struct_name
       {
           int num;
 
-          num = find_struct($2);
+          num = find_struct($2.real, $2.override);
           if (num < 0)
           {
-              yyerrorf("Unknown struct '%s'", get_txt($2));
+              yyerrorf("Unknown struct '%s'", get_txt($2.real->name));
               $$ = lpctype_any_struct;
           }
           else
           {
               $$ = get_struct_type(STRUCT_DEF(num).type);
           }
-
-          free_mstring($2);
+      }
+    | L_STRUCT L_MIXED
+      {
+        $$ = lpctype_any_struct;
       }
     | single_basic_non_void_type '*'
       {
@@ -12764,7 +12950,8 @@ expr0:
             || ((type2.t_flags & TYPE_MOD_LITERAL) && !lpctype_contains(type2.t_type, type1.t_type))))
           {
               yyerrorf("Bad assignment %s", get_two_fulltypes(type1, type2));
-              restype = ref_fulltype(type1);
+              if (!restype.t_type)
+                  restype = ref_fulltype(type1);
           }
 
           /* Special checks for struct assignments */
@@ -13269,18 +13456,17 @@ expr4:
           $$.lvalue = (lvalue_block_t) {0, 0};
           $$.name =   NULL;
       }
-    | '(' '<' identifier '>'
+    | '(' '<' struct_name '>'
       {
           int num;
 
-          num = find_struct($3);
+          num = find_struct($3.real, $3.override);
           if (num < 0)
           {
-              yyerrorf("Unknown struct '%s'", get_txt($3));
+              yyerrorf("Unknown struct '%s'", get_txt($3.real->name));
               YYACCEPT;
           }
           $<number>$ = num;
-          free_mstring($3);
       }
 
       note_start opt_struct_init ')'
@@ -13576,7 +13762,7 @@ expr4:
       } /* expr4 index_range */
 
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
-    | expr4 '[' expr0 ',' expr0 ']' %prec '['
+    | expr4 index_map_expr %prec '['
       {
 %line
           /* Generate MAP_INDEX/PUSH_INDEXED_MAP_LVALUE */
@@ -13587,37 +13773,58 @@ expr4:
            * a mapping, or a runtime error will occur.
            * Therefore we don't need its lvalue.
            */
-          free_lvalue_block($5.lvalue);
-          free_lvalue_block($3.lvalue);
           free_lvalue_block($1.lvalue);
-          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, F_MAP_INDEX_LVALUE);
+          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, $2.lvalue_inst);
           $$.type = get_fulltype(lpctype_mixed);
           $$.name = NULL;
           $$.needs_use = true;
 
-          ins_f_code(F_MAP_INDEX);
+          ins_f_code($2.rvalue_inst);
 
           /* Check and compute types */
-          if ($3.type.t_flags & TYPE_MOD_REFERENCE
-           || $5.type.t_flags & TYPE_MOD_REFERENCE)
-              yyerror("Reference used as index");
-
           check_unknown_type($1.type.t_type);
 
           if (exact_types && !lpctype_contains(lpctype_mapping, $1.type.t_type))
               fulltype_error("Bad type to indexed lvalue", $1.type);
 
-          if (exact_types && !lpctype_contains(lpctype_int, $5.type.t_type))
-              fulltype_error("Bad type of index", $5.type);
+          if (exact_types && !lpctype_contains(lpctype_int, $2.type1.t_type))
+              fulltype_error("Bad type of index", $2.type1);
 
           use_variable($1.name, VAR_USAGE_READ);
-          use_variable($3.name, VAR_USAGE_READ);
-          use_variable($5.name, VAR_USAGE_READ);
 
           free_fulltype($1.type);
-          free_fulltype($3.type);
-          free_fulltype($5.type);
+          free_fulltype($2.type1);
       }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | expr4 index_map_range %prec '['
+      {
+%line
+          /* Generate a range expression */
+          $$.start = $1.start;
+
+          free_lvalue_block($1.lvalue);
+          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, $2.lvalue_inst);
+          $$.type = get_fulltype(lpctype_any_array);
+          $$.name = NULL;
+
+          ins_f_code($2.rvalue_inst);
+
+          use_variable($1.name, VAR_USAGE_READ);
+
+          /* Check the types */
+
+          if (!lpctype_contains(lpctype_mapping, $1.type.t_type))
+              fulltype_error("Bad type to mapping range expression", $1.type);
+          if (!lpctype_contains(lpctype_int, $2.type1.t_type))
+              fulltype_error("Bad type of index", $2.type1);
+          if (!lpctype_contains(lpctype_int, $2.type2.t_type))
+              fulltype_error("Bad type of index", $2.type2);
+
+          free_fulltype($1.type);
+          free_fulltype($2.type1);
+          free_fulltype($2.type2);
+      } /* expr4 index_map_range */
 ; /* expr4 */
 
 
@@ -13772,7 +13979,7 @@ lvalue:
       }
 
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
-    | expr4 '[' expr0 ',' expr0 ']' %prec '['
+    | expr4 index_map_expr %prec '['
       {
           /* Generate/add an PUSH_INDEXED_MAP_LVALUE */
 
@@ -13782,14 +13989,12 @@ lvalue:
            * a mapping, or a runtime error will occur.
            * Therefore we don't need its lvalue.
            */
-          free_lvalue_block($5.lvalue);
-          free_lvalue_block($3.lvalue);
           free_lvalue_block($1.lvalue);
-          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, F_MAP_INDEX_LVALUE);
+          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, $2.lvalue_inst);
           $$.type = lpctype_mixed;
           $$.name = NULL;
 
-          $$.vlvalue_inst = F_MAP_INDEX_VLVALUE;
+          $$.vlvalue_inst = $2.vlvalue_inst;
           $$.num_arg = 0;
 
           /* Remove the code from the program block. */
@@ -13797,23 +14002,16 @@ lvalue:
           last_expression = -1;
 
           /* Check and compute types */
-          if ($3.type.t_flags & TYPE_MOD_REFERENCE
-           || $5.type.t_flags & TYPE_MOD_REFERENCE)
-              yyerror("Reference used as index");
-
           if (exact_types && !lpctype_contains(lpctype_mapping, $1.type.t_type))
               fulltype_error("Bad type to indexed lvalue", $1.type);
 
-          if (exact_types && !lpctype_contains(lpctype_int, $5.type.t_type))
-              fulltype_error("Bad type of index", $5.type);
+          if (exact_types && !lpctype_contains(lpctype_int, $2.type1.t_type))
+              fulltype_error("Bad type of index", $2.type1);
 
           use_variable($1.name, VAR_USAGE_READ);
-          use_variable($3.name, VAR_USAGE_READ);
-          use_variable($5.name, VAR_USAGE_READ);
 
           free_fulltype($1.type);
-          free_fulltype($3.type);
-          free_fulltype($5.type);
+          free_fulltype($2.type1);
       }
 
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
@@ -13864,6 +14062,40 @@ lvalue:
           free_fulltype($2.type1);
           free_fulltype($2.type2);
       }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | expr4 index_map_range %prec '['
+      {
+%line
+          /* Generate a range expression for a mapping */
+
+          /* We don't need the mapping as an lvalue. */
+          free_lvalue_block($1.lvalue);
+
+          $$.lvalue = compose_lvalue_block((lvalue_block_t) {0, 0}, 0, $1.start, $2.lvalue_inst);
+          $$.type = lpctype_any_array;
+          $$.name = NULL;
+          $$.vlvalue_inst = 0;
+          $$.num_arg = 0;
+
+          /* Remove the code from the program block. */
+          CURRENT_PROGRAM_SIZE = $1.start;
+          last_expression = -1;
+
+          /* Check the types */
+          if (!lpctype_contains(lpctype_mapping, $1.type.t_type))
+              fulltype_error("Bad type to mapping range expression", $1.type);
+          if (!lpctype_contains(lpctype_int, $2.type1.t_type))
+              fulltype_error("Bad type of index", $2.type1);
+          if (!lpctype_contains(lpctype_int, $2.type2.t_type))
+              fulltype_error("Bad type of index", $2.type2);
+
+          use_variable($1.name, VAR_USAGE_READ);
+
+          free_fulltype($1.type);
+          free_fulltype($2.type1);
+          free_fulltype($2.type2);
+      } /* expr4 index_map_range */
 
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
     | expr4 member_operator struct_member_name %prec L_ARROW
@@ -14370,10 +14602,6 @@ index_range :
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
     | '[' '<' expr0 L_RANGE           ']'
       {
-          /* Simulate an expression yielding <1 for the upper bound.
-           * We pretend that it's part of the lower bound expr.
-           */
-
           if (pragma_range_check)
               ins_byte(F_ARRAY_RANGE_CHECK);
 
@@ -14392,10 +14620,6 @@ index_range :
     /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
     | '[' '>' expr0 L_RANGE           ']'
       {
-          /* Simulate an expression yielding <1 for the upper bound.
-           * We pretend that it's part of the lower bound expr.
-           */
-
           if (pragma_range_check)
               ins_byte(F_ARRAY_RANGE_CHECK);
 
@@ -14411,6 +14635,442 @@ index_range :
           free_lvalue_block($3.lvalue);
       }
 ; /* index_range */
+
+index_map_range:
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+      '[' expr0 ',' L_RANGE expr0 ']'
+
+      {
+          free_fulltype($2.type);
+
+          /* Simulate an expression yielding 0 for the lower bound.
+           * We pretend that it's part of the upper bound expr.
+           */
+
+          if (!realloc_a_program(1))
+          {
+              yyerrorf("Out of memory: program size %"PRIdPINT"\n", CURRENT_PROGRAM_SIZE+1);
+              free_fulltype($5.type);
+              YYACCEPT;
+          }
+
+          memmove(PROGRAM_BLOCK + $5.start + 1, PROGRAM_BLOCK + $5.start, CURRENT_PROGRAM_SIZE - $5.start);
+          PUT_CODE(PROGRAM_BLOCK + $5.start, F_CONST0);
+          CURRENT_PROGRAM_SIZE++;
+
+          /* Return the data */
+
+          $$.rvalue_inst  = F_MAP_RANGE;
+          $$.lvalue_inst  = F_MAP_RANGE_LVALUE;
+          $$.start        = $2.start;
+          $$.end          = CURRENT_PROGRAM_SIZE;
+          $$.type1        = get_fulltype(lpctype_int);
+          $$.type2        = $5.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' L_RANGE '<' expr0 ']'
+
+      {
+          free_fulltype($2.type);
+
+          /* Simulate an expression yielding 0 for the lower bound.
+           * We pretend that it's part of the upper bound expr.
+           */
+
+          if (!realloc_a_program(1))
+          {
+              yyerrorf("Out of memory: program size %"PRIdPINT"\n", CURRENT_PROGRAM_SIZE+1);
+              free_fulltype($6.type);
+              YYACCEPT;
+          }
+
+          memmove(PROGRAM_BLOCK + $6.start + 1, PROGRAM_BLOCK + $6.start, CURRENT_PROGRAM_SIZE - $6.start);
+          PUT_CODE(PROGRAM_BLOCK + $6.start, F_CONST0);
+          CURRENT_PROGRAM_SIZE++;
+
+          /* Return the data */
+
+          $$.rvalue_inst = F_MAP_NR_RANGE;
+          $$.lvalue_inst = F_MAP_NR_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = get_fulltype(lpctype_int);
+          $$.type2       = $6.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($6.name, VAR_USAGE_READ);
+
+          free_lvalue_block($6.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' L_RANGE '>' expr0 ']'
+
+      {
+          free_fulltype($2.type);
+
+          /* Simulate an expression yielding 0 for the lower bound.
+           * We pretend that it's part of the upper bound expr.
+           */
+
+          if (!realloc_a_program(1))
+          {
+              yyerrorf("Out of memory: program size %"PRIdPINT"\n", CURRENT_PROGRAM_SIZE+1);
+              free_fulltype($6.type);
+              YYACCEPT;
+          }
+
+          memmove(PROGRAM_BLOCK + $6.start + 1, PROGRAM_BLOCK + $6.start, CURRENT_PROGRAM_SIZE - $6.start);
+          PUT_CODE(PROGRAM_BLOCK + $6.start, F_CONST0);
+          CURRENT_PROGRAM_SIZE++;
+
+          /* Return the data */
+
+          $$.rvalue_inst = F_MAP_NA_RANGE;
+          $$.lvalue_inst = F_MAP_NA_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = get_fulltype(lpctype_int);
+          $$.type2       = $6.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($6.name, VAR_USAGE_READ);
+
+          free_lvalue_block($6.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' expr0 L_RANGE expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_RANGE;
+          $$.lvalue_inst = F_MAP_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $4.type;
+          $$.type2       = $6.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($4.name, VAR_USAGE_READ);
+          use_variable($6.name, VAR_USAGE_READ);
+
+          free_lvalue_block($6.lvalue);
+          free_lvalue_block($4.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' expr0 L_RANGE '<' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_NR_RANGE;
+          $$.lvalue_inst = F_MAP_NR_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $4.type;
+          $$.type2       = $7.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($4.name, VAR_USAGE_READ);
+          use_variable($7.name, VAR_USAGE_READ);
+
+          free_lvalue_block($7.lvalue);
+          free_lvalue_block($4.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '<' expr0 L_RANGE expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_RN_RANGE;
+          $$.lvalue_inst = F_MAP_RN_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $7.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($7.name, VAR_USAGE_READ);
+
+          free_lvalue_block($7.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '<' expr0 L_RANGE '<' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_RR_RANGE;
+          $$.lvalue_inst = F_MAP_RR_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $8.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($8.name, VAR_USAGE_READ);
+
+          free_lvalue_block($8.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' expr0 L_RANGE '>' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_NA_RANGE;
+          $$.lvalue_inst = F_MAP_NA_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $4.type;
+          $$.type2       = $7.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($4.name, VAR_USAGE_READ);
+          use_variable($7.name, VAR_USAGE_READ);
+
+          free_lvalue_block($7.lvalue);
+          free_lvalue_block($4.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '>' expr0 L_RANGE expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_AN_RANGE;
+          $$.lvalue_inst = F_MAP_AN_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $7.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($7.name, VAR_USAGE_READ);
+
+          free_lvalue_block($7.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '<' expr0 L_RANGE '>' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_RA_RANGE;
+          $$.lvalue_inst = F_MAP_RA_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $8.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($8.name, VAR_USAGE_READ);
+
+          free_lvalue_block($8.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '>' expr0 L_RANGE '<' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_AR_RANGE;
+          $$.lvalue_inst = F_MAP_AR_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $8.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($8.name, VAR_USAGE_READ);
+
+          free_lvalue_block($8.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '>' expr0 L_RANGE '>' expr0 ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_AA_RANGE;
+          $$.lvalue_inst = F_MAP_AA_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = $8.type;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+          use_variable($8.name, VAR_USAGE_READ);
+
+          free_lvalue_block($8.lvalue);
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' expr0 L_RANGE ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_NX_RANGE;
+          $$.lvalue_inst = F_MAP_NX_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $4.type;
+          $$.type2       = get_fulltype(lpctype_int);
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($4.name, VAR_USAGE_READ);
+
+          free_lvalue_block($4.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '<' expr0 L_RANGE ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_RX_RANGE;
+          $$.lvalue_inst = F_MAP_RX_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = get_fulltype(lpctype_int);
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '>' expr0 L_RANGE ']'
+      {
+          free_fulltype($2.type);
+
+          $$.rvalue_inst = F_MAP_AX_RANGE;
+          $$.lvalue_inst = F_MAP_AX_RANGE_LVALUE;
+          $$.start       = $2.start;
+          $$.end         = CURRENT_PROGRAM_SIZE;
+          $$.type1       = $5.type;
+          $$.type2       = get_fulltype(lpctype_int);
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+; /* index_map_range */
+
+index_map_expr:
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+      '[' expr0 ',' expr0 ']'
+
+      {
+          if ($2.type.t_flags & TYPE_MOD_REFERENCE
+           || $4.type.t_flags & TYPE_MOD_REFERENCE)
+              yyerror("Reference used as index");
+
+          free_fulltype($2.type);
+
+          $$.rvalue_inst  = F_MAP_INDEX;
+          $$.lvalue_inst  = F_MAP_INDEX_LVALUE;
+          $$.vlvalue_inst = F_MAP_INDEX_VLVALUE;
+          $$.start        = $2.start;
+          $$.end          = CURRENT_PROGRAM_SIZE;
+          $$.type1        = $4.type;
+          $$.type2.t_type = NULL;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($4.name, VAR_USAGE_READ);
+
+          free_lvalue_block($4.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '<' expr0 ']'
+
+      {
+          if ($2.type.t_flags & TYPE_MOD_REFERENCE
+           || $5.type.t_flags & TYPE_MOD_REFERENCE)
+              yyerror("Reference used as index");
+
+          free_fulltype($2.type);
+
+          $$.rvalue_inst  = F_MAP_RINDEX;
+          $$.lvalue_inst  = F_MAP_RINDEX_LVALUE;
+          $$.vlvalue_inst = F_MAP_RINDEX_VLVALUE;
+          $$.start        = $2.start;
+          $$.end          = CURRENT_PROGRAM_SIZE;
+          $$.type1        = $5.type;
+          $$.type2.t_type = NULL;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+
+    /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - -*/
+    | '[' expr0 ',' '>' expr0 ']'
+
+      {
+          if ($2.type.t_flags & TYPE_MOD_REFERENCE
+           || $5.type.t_flags & TYPE_MOD_REFERENCE)
+              yyerror("Reference used as index");
+
+          free_fulltype($2.type);
+
+          $$.rvalue_inst  = F_MAP_AINDEX;
+          $$.lvalue_inst  = F_MAP_AINDEX_LVALUE;
+          $$.vlvalue_inst = F_MAP_AINDEX_VLVALUE;
+          $$.start        = $2.start;
+          $$.end          = CURRENT_PROGRAM_SIZE;
+          $$.type1        = $5.type;
+          $$.type2.t_type = NULL;
+
+          use_variable($2.name, VAR_USAGE_READ);
+          use_variable($5.name, VAR_USAGE_READ);
+
+          free_lvalue_block($5.lvalue);
+          free_lvalue_block($2.lvalue);
+      }
+; /* index_map_expr */
 
 
 /* The following rules are used to construct array and
@@ -14593,6 +15253,35 @@ m_expr_values:
 
 
 
+struct_name:
+      L_IDENTIFIER
+      {
+          check_identifier($1);
+          $$.override = OVERRIDE_NONE;
+          $$.real = $1;
+      }
+    | L_COLON_COLON L_IDENTIFIER
+      {
+          check_identifier($2);
+          $$.override = OVERRIDE_LFUN;
+          $$.real = $2;
+      }
+    | L_IDENTIFIER L_COLON_COLON L_IDENTIFIER
+      {
+          check_identifier($3);
+
+          if (mstreq($1->name, STR_SEFUN))
+              $$.override = OVERRIDE_SEFUN;
+          else
+          {
+              $$.override = OVERRIDE_NONE;
+              yyerrorf("illegal struct name qualifier '%s'", get_txt($1->name));
+          }
+          $$.real = $3;
+      }
+; /* struct_name */
+
+
 /* Rule used to parse a static or dynamic member name in lookups */
 
 struct_member_name:
@@ -14763,14 +15452,14 @@ function_call:
           {
               /* prevent freeing by exotic name clashes */
               /* also makes life easier below */
-              init_global_identifier(real_name, /* bVariable: */ MY_TRUE);
+              init_global_identifier(real_name, /* bProgram: */ true);
               real_name->next_all = all_globals;
               all_globals = real_name;
           }
           else if ( ($1.super ? ( $<function_call_head>$.efun_override == OVERRIDE_SEFUN )
                               : ( real_name->u.global.function == I_GLOBAL_FUNCTION_OTHER ))
                 && real_name->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER
-                && !disable_sefuns)
+                && !pragma_no_simul_efuns)
           {
               /* It's a real simul-efun */
 
@@ -14845,7 +15534,7 @@ function_call:
                * afterwards
                */
 
-              if ( !disable_sefuns
+              if ( !pragma_no_simul_efuns
                && (simul_efun = $<function_call_head>2.simul_efun) >= 0)
               {
                   /* SIMUL EFUN */
@@ -14925,8 +15614,6 @@ function_call:
               {
                   /* LFUN or INHERITED LFUN */
 
-                  PREPARE_INSERT(6)
-
                   function_t *funp;
                   function_t  inherited_function;
 
@@ -14941,7 +15628,7 @@ function_call:
 
                       ix = insert_inherited( $1.super, $1.real->name
                                            , &super_prog, &inherited_function
-                                           , $4, (bytecode_p)__PREPARE_INSERT__p
+                                           , $4
                                            );
 
                       if (ix < 0)
@@ -14984,6 +15671,8 @@ function_call:
                   else
                   {
                       /* Normal lfun in this program */
+
+                      PREPARE_INSERT(6)
 
                       ap_needed = MY_TRUE;
                       add_f_code(F_CALL_FUNCTION);
@@ -15389,7 +16078,7 @@ function_call:
            */
 
           sefun = $2.strict_member ? call_strict_sefun : call_other_sefun;
-          if (!disable_sefuns && sefun == I_GLOBAL_SEFUN_BY_NAME)
+          if (!pragma_no_simul_efuns && sefun == I_GLOBAL_SEFUN_BY_NAME)
           {
               /* The simul-efun has to be called by name:
                * insert the extra args for the call_other
@@ -15441,7 +16130,7 @@ function_call:
            * the code and value have been already generated.
            */
 
-          if (!disable_sefuns && sefun >= 0)
+          if (!pragma_no_simul_efuns && sefun >= 0)
           {
               /* Create argument type list for type checking. */
               add_arg_type(ref_fulltype($1.type));
@@ -15465,7 +16154,7 @@ function_call:
           $$.might_lvalue = true;
           $$.needs_use = false;
 
-          if (!disable_sefuns && sefun >= 0)
+          if (!pragma_no_simul_efuns && sefun >= 0)
           {
               /* SIMUL EFUN */
 
@@ -15568,8 +16257,8 @@ function_call:
               $$.type = get_fulltype(instrs[call_instr].ret_type);
 
               if (!check_unknown_type($1.type.t_type)
-               && !has_common_type(lpctype_string_object, $1.type.t_type)
-               && !has_common_type(lpctype_string_object_array, $1.type.t_type))
+               && !has_common_type(lpctype_string_object_lwobject, $1.type.t_type)
+               && !has_common_type(lpctype_string_object_lwobject_array, $1.type.t_type))
               {
                   efun_argument_error(1, call_instr, efun_arg_types + instrs[call_instr].arg_index, $1.type);
               }
@@ -16801,7 +17490,7 @@ find_inherited_function ( const char * super_name
 static int
 insert_inherited (char *super_name, string_t *real_name
                  , program_t **super_p, function_t *fun_p
-                 , int num_arg, bytecode_p __prepare_insert__p
+                 , int num_arg
                  )
 
 /* The compiler encountered a <super_name>::<real_name>() call with
@@ -16839,7 +17528,7 @@ insert_inherited (char *super_name, string_t *real_name
     if (ip != NULL)
     {
         /* Found it! */
-        bytecode_p __PREPARE_INSERT__p = __prepare_insert__p;
+        PREPARE_INSERT(5)
 
         /* Generate the function call */
         add_f_code(F_CALL_INHERITED);
@@ -16868,6 +17557,7 @@ insert_inherited (char *super_name, string_t *real_name
         int ip_index;
         int first_index;
         unsigned short i;
+        p_uint code_start = CURRENT_PROGRAM_SIZE;
 
         /* Prepare wildcard calls with arguments. */
         if (num_arg)
@@ -16904,8 +17594,7 @@ insert_inherited (char *super_name, string_t *real_name
              * between consecutive calls can be omitted.
              */
 
-            /* 6 bytes are already reserved in the program. */
-            bytecode_p __PREPARE_INSERT__p = __prepare_insert__p;
+            PREPARE_INSERT(5)
 
             /* Create array for the return values. */
             add_f_code(F_ARRAY0);
@@ -17052,7 +17741,9 @@ insert_inherited (char *super_name, string_t *real_name
         else
         {
             /* Backpatch number of calls. */
-            put_short(__prepare_insert__p+1, calls);
+            bytecode_p orig_code = PROGRAM_BLOCK + code_start;
+
+            put_short(orig_code+1, calls);
 
             /* And now a lot of backpatching, depending on how
              * many calls we made.
@@ -17063,7 +17754,7 @@ insert_inherited (char *super_name, string_t *real_name
                  * remove the arguments and put an empty array
                  * as a result on the stack.
                  */
-                bytecode_p __PREPARE_INSERT__p = __prepare_insert__p;
+                bytecode_p __PREPARE_INSERT__p = orig_code;
 
                 add_f_code(F_POP_N);
                 add_byte(num_arg);
@@ -17077,10 +17768,10 @@ insert_inherited (char *super_name, string_t *real_name
                  * call above and patch the F_PUT_ARRAY_ELEMENT
                  * accordingly.
                  */
-                memmove(__prepare_insert__p + 5,  __prepare_insert__p + 9, 9);
-                put_short(__prepare_insert__p + 11,  1);
-                put_uint8(__prepare_insert__p + 14, instrs[F_MOVE_VALUE].opcode);
-                put_uint8(__prepare_insert__p + 15, 0);
+                memmove(orig_code + 5, orig_code + 9, 9);
+                put_short(orig_code + 11,  1);
+                put_uint8(orig_code + 14, instrs[F_MOVE_VALUE].opcode);
+                put_uint8(orig_code + 15, 0);
 
                 CURRENT_PROGRAM_SIZE -= 2;
             }
@@ -17217,21 +17908,31 @@ copy_structs (program_t *from, funflag_t flags)
         struct_def_t *pdef = from->struct_defs + struct_id;
         funflag_t f;
 
-        /* Combine the visibility flags. */
-        f = flags | pdef->flags;
-        if (pdef->flags & TYPE_MOD_PUBLIC)
-            f &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED);
-        else if (pdef->flags & TYPE_MOD_PRIVATE)
-            f |= NAME_HIDDEN;
+        if (pdef->flags & (TYPE_MOD_PRIVATE | NAME_HIDDEN))
+        {
+            /* Ignore it for now. Just record the definition in
+             * the type object (if there is one), so we can find
+             * it later on.
+             */
+            if (pdef->type->name->lpctype != NULL
+             && pdef->type->name->lpctype->t_struct.def_idx == USHRT_MAX)
+                update_struct_type(pdef->type->name->lpctype, pdef->type);
 
-        if (f & (TYPE_MOD_PRIVATE | NAME_HIDDEN))
-            f &= ~(TYPE_MOD_PROTECTED | TYPE_MOD_PUBLIC);
-        else if (f & TYPE_MOD_PROTECTED)
-            f &= ~(TYPE_MOD_PUBLIC);
+            continue;
+        }
+
+        /* Combine the visibility flags. */
+        f = inherit_visibility_flags(pdef->flags, flags);
+        assert(!(f & NAME_HIDDEN));
+
+        /* Create an identifier, if there isn't one. */
+        p = make_global_identifier(get_txt(struct_t_name(pdef->type)), I_TYPE_GLOBAL);
+        if (p == NULL)
+            continue;
 
         /* Duplicate definition? */
-        id = find_struct(struct_t_name(pdef->type));
-        if (!(f & NAME_HIDDEN) && id >= 0)
+        id = find_struct(p, OVERRIDE_LFUN);
+        if (id >= 0)
         {
             /* We have a struct with this name. Check if we just
              * inherited it again, or if it's a name clash.
@@ -17256,23 +17957,19 @@ copy_structs (program_t *from, funflag_t flags)
                             );
                 continue;
             }
-
-            f |= NAME_HIDDEN;
+            else
+            {
+                /* Just combine visibility flags. */
+                STRUCT_DEF(id).flags = combine_visibility_flags(STRUCT_DEF(id).flags, f);
+                continue;
+            }
         }
-
-        /* New struct */
-        p = make_global_identifier(get_txt(struct_t_name(pdef->type)), I_TYPE_GLOBAL);
-        if (p == NULL)
-            continue;
 
         /* Create a new struct entry, then replace the struct prototype
          * type with the one we inherited.
          */
-        current_struct = define_new_struct( MY_FALSE, p, get_txt(struct_t_pname(pdef->type)), f);
-        free_struct_type(STRUCT_DEF(current_struct).type);
-        STRUCT_DEF(current_struct).type = ref_struct_type(pdef->type);
+        current_struct = define_struct( MY_FALSE, p, get_txt(struct_t_pname(pdef->type)), f, pdef->type);
         STRUCT_DEF(current_struct).inh = INHERIT_COUNT;
-        update_struct_type(STRUCT_DEF(current_struct).type->name->lpctype, pdef->type);
     }
 } /* copy_structs() */
 
@@ -17405,17 +18102,7 @@ inherit_variable (variable_t *variable, funflag_t varmodifier, int redeclare)
         new_type &= ~(TYPE_MOD_PRIVATE | TYPE_MOD_PROTECTED);
 
     fulltype_t vartype = variable->type;
-
-    vartype.t_flags |= new_type 
-                    | (variable->type.t_flags & TYPE_MOD_PRIVATE
-                       ? (NAME_HIDDEN|NAME_INHERITED)
-                       :  NAME_INHERITED
-                      );
-    /* The most restrictive visibility wins. */
-    if (vartype.t_flags & (TYPE_MOD_PRIVATE | NAME_HIDDEN))
-        vartype.t_flags &= ~(TYPE_MOD_PROTECTED | TYPE_MOD_PUBLIC);
-    else if (vartype.t_flags & TYPE_MOD_PROTECTED)
-        vartype.t_flags &= ~(TYPE_MOD_PUBLIC);
+    vartype.t_flags = inherit_visibility_flags(vartype.t_flags, varmodifier) | NAME_INHERITED;
 
     if (redeclare >= 0)
         redeclare_variable(p, vartype, VIRTUAL_VAR_TAG | redeclare);
@@ -18293,7 +18980,7 @@ inherit_obsoleted_variables  (inherit_t *newinheritp, program_t *from, int first
 
 /*-------------------------------------------------------------------------*/
 static int
-inherit_program (program_t *from, funflag_t funmodifier, funflag_t varmodifier)
+inherit_program (program_t *from, funflag_t funmodifier, funflag_t varmodifier, funflag_t structmodifier)
 
 /* Copies struct definitions, functions and variables from the program <from>
  * into our program. Functions are copied with visibility <funmodifier>,
@@ -18659,6 +19346,8 @@ inherit_program (program_t *from, funflag_t funmodifier, funflag_t varmodifier)
          */
         do
         {
+            int32 n; /* existing function index */
+
             /* Ignore cross defines.
              * They are the only complete invisible entries.
              */
@@ -18670,234 +19359,172 @@ inherit_program (program_t *from, funflag_t funmodifier, funflag_t varmodifier)
             if (!p)
                 break;
 
-            if (p->type != I_TYPE_UNKNOWN)
+            p = add_global_name(p);
+            n = p->u.global.function;
+
+            /* If the identifier is (also) an lfun, handle it, even if
+             * it's overloaded by something else as well. If we didn't
+             * subsequent inheritors would receive illegal function
+             * start offsets.
+             */
+            if ( n != I_GLOBAL_FUNCTION_OTHER && n != first_func_index + i)
             {
-                /* We got this ident already somewhere */
-
-                int32 n; /* existing function index */
-
-                n = p->u.global.function;
-
-                /* If the identifier is (also) an lfun, handle it, even if
-                 * it's overloaded by something else as well. If we didn't
-                 * subsequent inheritors would receive illegal function
-                 * start offsets.
+                /* Already inherited from somewhere else.
+                 * Don't try to resolve cross-references inside the
+                 * currently inherited program; not only is this superflous,
+                 * but it can also lead to circular cross-inheritance
+                 * when there was a misplaced prototype or an explicit
+                 * directive to inherit a multiply inherited function
+                 * from a particular base class (the latter is not
+                 * implemented). In these cases, the information that lead
+                 * to the non-standard preference would be very hard to
+                 * reconstruct.
                  */
-                if ( n != I_GLOBAL_FUNCTION_OTHER && n != first_func_index + i)
+                if ((uint32)n < first_func_index || (uint32)n >= first_func_index + from->num_functions)
                 {
-                    /* Already inherited from somewhere else.
-                     * Don't try to resolve cross-references inside the
-                     * currently inherited program; not only is this superflous,
-                     * but it can also lead to circular cross-inheritance
-                     * when there was a misplaced prototype or an explicit
-                     * directive to inherit a multiply inherited function
-                     * from a particular base class (the latter is not
-                     * implemented). In these cases, the information that lead
-                     * to the non-standard preference would be very hard to
-                     * reconstruct.
+                    /* We already have a function definition/prototype
+                     * for this name.
                      */
-                    if ((uint32)n < first_func_index || (uint32)n >= first_func_index + from->num_functions)
+
+                    function_t *OldFunction = FUNCTION(n);
+
+                    if ( !(OldFunction->flags & NAME_INHERITED) )
                     {
-                        /* We already have a function definition/prototype
-                         * for this name.
+                        /* Since inherits are not possible after functions
+                         * have been compiled, there are two options:
+                         * 1. We had a prototype for the function.
+                         * 2. Virtual inherit update made an inherited
+                         *    function undefined.
+                         * In both cases we'll cross-define to the new
+                         * function.
                          */
-
-                        function_t *OldFunction = FUNCTION(n);
-
-                        if ( !(OldFunction->flags & NAME_INHERITED) )
-                        {
-                            /* Since inherits are not possible after functions
-                             * have been compiled, there are two options:
-                             * 1. We had a prototype for the function.
-                             * 2. Virtual inherit update made an inherited
-                             *    function undefined.
-                             * In both cases we'll cross-define to the new
-                             * function.
-                             */
-                            if (OldFunction->flags & NAME_PROTOTYPE)
-                                yywarnf(
-                                    "Misplaced prototype for %s in %s ignored.\n"
-                                    , get_txt(fun.name), current_loc.file->name
-                                );
-
-                            /* The function name was a counted reference,
-                             * but after cross-definition it shouldn't be.
-                             */
-                            free_mstring(OldFunction->name);
-
-                            cross_define( &fun, OldFunction
-                                        , current_func_index - n );
-                            p->u.global.function = current_func_index;
-                        }
-                        else if ( (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
-                                    == (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
-                        {
-                            /* There is already one function with this
-                            * name. Ignore the private one, as we
-                            * only need it for useful error messages.
-                            */
-
-                            break;
-                        }
-                        else if ( (OldFunction->flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
-                                     == (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
-                        {
-                            /* The old one was invisible, ignore it
-                             * and take this one.
-                             */
-
-                            p->u.global.function = current_func_index;
-                        }
-                        else if ((fun.flags | funmodifier) & TYPE_MOD_VIRTUAL
-                              && OldFunction->flags & TYPE_MOD_VIRTUAL
-                          &&    get_virtual_function_id(funprogp, funprogidx)
-  == get_virtual_function_id(INHERIT(OldFunction->offset.inherit).prog
-                , n - INHERIT(OldFunction->offset.inherit).function_index_offset
-                     )
-                                 )
-                        {
-                            /* Entries denote the same function and both
-                             * entries are visible. We have to use
-                             * cross_define nonetheless, to get consistant
-                             * redefinition (and to avoid the nomask
-                             * checking that comes next), and we prefer
-                             * the first one.
-                             *
-                             * It is important, that both entries are
-                             * indeed visible, because otherwise invisible
-                             * (i.e. private) functions would be made
-                             * visible again by another visible occurrence
-                             * of the same function. The originally invisible
-                             * occurrence would then be subject to
-                             * redefinition and nomask checking.
-                             */
-                            OldFunction->flags |= fun.flags &
-                                (TYPE_MOD_PUBLIC|TYPE_MOD_NO_MASK);
-                            OldFunction->flags &= fun.flags |
-                                ~(TYPE_MOD_STATIC|TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED|NAME_HIDDEN);
-                            cross_define( OldFunction, &fun
-                                        , n - current_func_index );
-                        }
-                        else if ( (fun.flags & OldFunction->flags & TYPE_MOD_NO_MASK)
-                             &&  !( (fun.flags|OldFunction->flags) & NAME_UNDEFINED ) )
-                        {
-                            yyerrorf(
-                              "Illegal to inherit 'nomask' function '%s' twice",
-                              get_txt(fun.name));
-                        }
-                        else if ((   fun.flags & TYPE_MOD_NO_MASK
-                                  || OldFunction->flags & NAME_UNDEFINED )
-                              && !(fun.flags & NAME_UNDEFINED)
-                                )
-                        {
-                            /* This function is visible and existing, but the
-                             * inherited one is not, or this one is also nomask:
-                             * prefer this one one.
-                             */
-                            cross_define( &fun, OldFunction
-                                        , current_func_index - n );
-                            p->u.global.function = current_func_index;
-                        }
-                        else
-                        {
-                            /* At least one of the functions is visible
-                             * or redefinable: prefer the first one.
-                             */
-
-                            cross_define( OldFunction, &fun
-                                        , n - current_func_index );
-                        }
-                    } /* if (n < first_func_index) */
-                    else if ( (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
-                                != (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
-                    {
-                        /* This is the dominant definition in the superclass,
-                         * inherit this one.
-                         */
-#ifdef DEBUG
-                        /* The definition we picked before can't be
-                         * cross-defined, because cross-defines won't
-                         * be registered as global identifiers.
-                         * So the previous definition should be
-                         * nominally invisible so we can redefine it.
-                         */
-                        if ( (FUNCTION(n)->flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
-                                != (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
-                        {
-                            fatal(
-                              "Inconsistent definition of %s() within "
-                              "superclass '%s'.\n"
-                            , get_txt(fun.name), get_txt(from->name)
+                        if (OldFunction->flags & NAME_PROTOTYPE)
+                            yywarnf(
+                                "Misplaced prototype for %s in %s ignored.\n"
+                                , get_txt(fun.name), current_loc.file->name
                             );
-                        }
-#endif
+
+                        /* The function name was a counted reference,
+                         * but after cross-definition it shouldn't be.
+                         */
+                        free_mstring(OldFunction->name);
+
+                        cross_define( &fun, OldFunction
+                                    , current_func_index - n );
                         p->u.global.function = current_func_index;
                     }
-                }
+                    else if ( (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
+                                == (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
+                    {
+                        /* There is already one function with this
+                        * name. Ignore the private one, as we
+                        * only need it for useful error messages.
+                        */
 
-                /* Handle the non-lfun aspects of the identifier */
-                {
-                    if (n != I_GLOBAL_FUNCTION_OTHER
-                     || (p->u.global.efun == I_GLOBAL_EFUN_OTHER
-                      && p->u.global.sim_efun == I_GLOBAL_SEFUN_OTHER
-#ifdef USE_PYTHON
-                      && !is_python_efun(p)
-#endif
-                        )
-                     || (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN)) == 0
-                       )
-                     {
-                        /* This is not an inherited private function shadowing
-                         * a (simul-)efun.
-                         */
-
-                        if (p->u.global.efun != I_GLOBAL_EFUN_OTHER
-                         || p->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER
-#ifdef USE_PYTHON
-                         || is_python_efun(p)
-#endif
-                           )
-                        {
-                            /* This inherited function shadows an efun */
-
-                            efun_shadow_t *q;
-
-                            q = xalloc(sizeof(efun_shadow_t));
-                            if (!q) {
-                                yyerrorf("Out of memory: efun shadow (%zu bytes)"
-                                        , sizeof(efun_shadow_t));
-                                break;
-                            }
-                            q->shadow = p;
-                            q->next = all_efun_shadows;
-                            all_efun_shadows = q;
-                        }
-
-                        /* Update the symbol table entry to point
-                         * to the newly read function, unless of course
-                         * the code above already took care of that change.
-                         */
-                        if (p->u.global.function == I_GLOBAL_FUNCTION_OTHER)
-                            p->u.global.function = current_func_index;
+                        break;
                     }
-                    /* else: inherited private defined function must not hide
-                     * the (simul-)efun and is thusly not added to
-                     * the symbol-table.
+                    else if ( (OldFunction->flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
+                                 == (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
+                    {
+                        /* The old one was invisible, ignore it
+                         * and take this one.
+                         */
+
+                        p->u.global.function = current_func_index;
+                    }
+                    else if ((fun.flags | funmodifier) & TYPE_MOD_VIRTUAL
+                          && OldFunction->flags & TYPE_MOD_VIRTUAL
+                      &&    get_virtual_function_id(funprogp, funprogidx)
+                              == get_virtual_function_id(INHERIT(OldFunction->offset.inherit).prog
+                                , n - INHERIT(OldFunction->offset.inherit).function_index_offset
+                     ))
+                    {
+                        /* Entries denote the same function and both
+                         * entries are visible. We have to use
+                         * cross_define nonetheless, to get consistant
+                         * redefinition (and to avoid the nomask
+                         * checking that comes next), and we prefer
+                         * the first one.
+                         *
+                         * It is important, that both entries are
+                         * indeed visible, because otherwise invisible
+                         * (i.e. private) functions would be made
+                         * visible again by another visible occurrence
+                         * of the same function. The originally invisible
+                         * occurrence would then be subject to
+                         * redefinition and nomask checking.
+                         */
+                        OldFunction->flags |= fun.flags &
+                            (TYPE_MOD_PUBLIC|TYPE_MOD_NO_MASK);
+                        OldFunction->flags &= fun.flags |
+                            ~(TYPE_MOD_STATIC|TYPE_MOD_PRIVATE|TYPE_MOD_PROTECTED|NAME_HIDDEN);
+                        cross_define( OldFunction, &fun
+                                    , n - current_func_index );
+                    }
+                    else if ( (fun.flags & OldFunction->flags & TYPE_MOD_NO_MASK)
+                         &&  !( (fun.flags|OldFunction->flags) & NAME_UNDEFINED ) )
+                    {
+                        yyerrorf(
+                          "Illegal to inherit 'nomask' function '%s' twice",
+                          get_txt(fun.name));
+                    }
+                    else if ((   fun.flags & TYPE_MOD_NO_MASK
+                              || OldFunction->flags & NAME_UNDEFINED )
+                          && !(fun.flags & NAME_UNDEFINED)
+                            )
+                    {
+                        /* This function is visible and existing, but the
+                         * inherited one is not, or this one is also nomask:
+                         * prefer this one one.
+                         */
+                        cross_define( &fun, OldFunction
+                                    , current_func_index - n );
+                        p->u.global.function = current_func_index;
+                    }
+                    else
+                    {
+                        /* At least one of the functions is visible
+                         * or redefinable: prefer the first one.
+                         */
+
+                        cross_define( OldFunction, &fun
+                                    , n - current_func_index );
+                    }
+                } /* if (n < first_func_index) */
+                else if ( (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
+                            != (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
+                {
+                    /* This is the dominant definition in the superclass,
+                     * inherit this one.
                      */
+#ifdef DEBUG
+                    /* The definition we picked before can't be
+                     * cross-defined, because cross-defines won't
+                     * be registered as global identifiers.
+                     * So the previous definition should be
+                     * nominally invisible so we can redefine it.
+                     */
+                    if ( (FUNCTION(n)->flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN))
+                            != (TYPE_MOD_PRIVATE|NAME_HIDDEN) )
+                    {
+                        fatal(
+                          "Inconsistent definition of %s() within "
+                          "superclass '%s'.\n"
+                        , get_txt(fun.name), get_txt(from->name)
+                        );
+                    }
+#endif
+                    p->u.global.function = current_func_index;
                 }
-            } /* if (p != I_TYPE_UNKNOWN) */
-
-            if (p->type == I_TYPE_UNKNOWN)
-            {
-                /* First time this function-ident was ever encountered.
-                 * Just make a new global.
-                 */
-
-                init_global_identifier(p, /* bVariable: */ MY_TRUE);
-                p->u.global.function  = current_func_index;
-                p->next_all = all_globals;
-                all_globals = p;
             }
+
+            /* Update the symbol table entry to point
+             * to the newly read function, unless of course
+             * the code above already took care of that change.
+             */
+            if (p->u.global.function == I_GLOBAL_FUNCTION_OTHER
+             && (fun.flags & (TYPE_MOD_PRIVATE|NAME_HIDDEN)) == 0)
+                p->u.global.function = current_func_index;
 
             /* Done with re/crossdefinition, now handle visibility.
              * Especially: public functions should not become private
@@ -18940,7 +19567,7 @@ inherit_program (program_t *from, funflag_t funmodifier, funflag_t varmodifier)
         fun_p[i] = fun;
     } /* for (inherited functions), pass 2 */
 
-    copy_structs(from, funmodifier & ~(TYPE_MOD_STATIC|TYPE_MOD_VIRTUAL));
+    copy_structs(from, structmodifier);
 
     if (from->flags & P_USE_NONLW_EFUNS)
     {
@@ -19284,9 +19911,10 @@ init_compiler ()
     make_static_type(get_union_type(lpctype_string, lpctype_bytes), &_lpctype_string_bytes);
     make_static_type(get_union_type(lpctype_string_array, lpctype_bytes_array), &_lpctype_string_or_bytes_array);
     make_static_type(get_union_type(lpctype_string, lpctype_any_object),&_lpctype_string_object);
-    make_static_type(get_array_type(lpctype_string_object),         &_lpctype_string_object_array);
-    make_static_type(get_array_type(lpctype_any_lwobject),          &_lpctype_lwobject_array);
     make_static_type(get_union_type(lpctype_any_object, lpctype_any_lwobject), &_lpctype_any_object_or_lwobject);
+    make_static_type(get_union_type(lpctype_string_object, lpctype_any_lwobject),&_lpctype_string_object_lwobject);
+    make_static_type(get_array_type(lpctype_string_object_lwobject), &_lpctype_string_object_lwobject_array);
+    make_static_type(get_array_type(lpctype_any_lwobject),          &_lpctype_lwobject_array);
     make_static_type(get_array_type(lpctype_any_object_or_lwobject), &_lpctype_any_object_or_lwobject_array);
     make_static_type(get_array_type(lpctype_any_object_or_lwobject_array), &_lpctype_any_object_or_lwobject_array_array);
     make_static_type(get_union_type(lpctype_int, lpctype_string),   &_lpctype_int_or_string);
@@ -19314,7 +19942,7 @@ get_simul_efun_index (string_t *name)
  */
 
 {
-    if (!disable_sefuns)
+    if (!pragma_no_simul_efuns)
     {
         ident_t *id = make_shared_identifier_mstr(name, I_TYPE_UNKNOWN, 0);
 
@@ -19335,7 +19963,7 @@ get_simul_efun_index (string_t *name)
                 return id->u.global.sim_efun;
             }
         }
-    } /* if (!disable_sefuns) */
+    } /* if (!pragma_no_simul_efuns) */
 
     return -1;
 } /* get_simul_efun_index() */
@@ -19347,7 +19975,8 @@ prolog (const char * fname, Bool isMasterObj)
 /* Initialize the compiler environment prior to a compile.
  * <fname> is the name of the top LPC file to be compiled.
  * <isMasterObj> is TRUE if this compile is part of the compilation of
- * the master object (in which case sefuns are disabled).
+ * the master object (in which case the master applied lfun
+ * declarations will be checked)).
  */
 
 {
@@ -19363,7 +19992,6 @@ prolog (const char * fname, Bool isMasterObj)
 
     /* Initialize all the globals */
     variables_defined = MY_FALSE;
-    disable_sefuns   = isMasterObj;
     last_expression  = -1;
     compiled_prog    = NULL;  /* NULL means fail to load. */
     heart_beat       = -1;
@@ -19374,6 +20002,7 @@ prolog (const char * fname, Bool isMasterObj)
     block_depth      = 0;
     default_varmod = 0;
     default_funmod = 0;
+    default_structmod = 0;
     current_inline = NULL;
     inline_closure_id = 0;
 
@@ -19903,7 +20532,8 @@ epilog (void)
         for (t = all_efun_shadows; NULL != (s = t); )
         {
             s->shadow->u.global.function = I_GLOBAL_FUNCTION_OTHER;
-            s->shadow->u.global.variable = I_GLOBAL_VARIABLE_FUN;
+            s->shadow->u.global.variable = I_GLOBAL_VARIABLE_WORLDWIDE;
+            s->shadow->u.global.struct_id = I_GLOBAL_STRUCT_NONE;
             t = s->next;
             xfree(s);
         }
@@ -19914,9 +20544,16 @@ epilog (void)
     
     remove_unknown_identifier();
 
-    /* Remove the concrete struct definition from the lpctype object. */
+    /* Remove the concrete struct definition from the lpctype object
+     * and free the reference we took.
+     */
     for (i = 0; (size_t)i < STRUCT_COUNT; i++)
-        clean_struct_type(STRUCT_DEF(i).type->name->lpctype);
+    {
+        lpctype_t *t = STRUCT_DEF(i).type->name->lpctype;
+        clean_struct_type(t);
+        t->t_struct.def_idx = USHRT_MAX;
+        free_lpctype(t);
+    }
 
     /* Now create the program structure */
     switch (0) { default:
@@ -20322,6 +20959,7 @@ compile_file (int fd, const char * fname,  Bool isMasterObj)
 {
     prolog(fname, isMasterObj);
     start_new_file(fd, fname);
+    pragma_no_simul_efuns = isMasterObj;
     yyparse();
     /* If the parse failed, either num_parse_error != 0
      * or inherit_file != NULL here.
@@ -20399,7 +21037,8 @@ clear_compiler_refs (void)
     clear_lpctype_ref(lpctype_string_bytes);
     clear_lpctype_ref(lpctype_string_or_bytes_array);
     clear_lpctype_ref(lpctype_string_object);
-    clear_lpctype_ref(lpctype_string_object_array);
+    clear_lpctype_ref(lpctype_string_object_lwobject);
+    clear_lpctype_ref(lpctype_string_object_lwobject_array);
     clear_lpctype_ref(lpctype_lwobject_array);
     clear_lpctype_ref(lpctype_any_object_or_lwobject);
     clear_lpctype_ref(lpctype_any_object_or_lwobject_array);
@@ -20431,7 +21070,8 @@ count_compiler_refs (void)
     count_lpctype_ref(lpctype_string_bytes);
     count_lpctype_ref(lpctype_string_or_bytes_array);
     count_lpctype_ref(lpctype_string_object);
-    count_lpctype_ref(lpctype_string_object_array);
+    count_lpctype_ref(lpctype_string_object_lwobject);
+    count_lpctype_ref(lpctype_string_object_lwobject_array);
     count_lpctype_ref(lpctype_lwobject_array);
     count_lpctype_ref(lpctype_any_object_or_lwobject);
     count_lpctype_ref(lpctype_any_object_or_lwobject_array);

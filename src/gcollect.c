@@ -183,7 +183,6 @@ static lambda_t *stale_lambda_closures;
 /*            Object clean up
  */
 
-typedef struct cleanup_s cleanup_t;
 typedef struct cleanup_map_extra_s cleanup_map_extra_t;
 
 
@@ -226,9 +225,6 @@ struct cleanup_map_extra_s
     cleanup_t  *context;  /* The cleanup context */
 };
 
-
-/* Forward declarations */
-static void cleanup_vector (svalue_t *svp, size_t num, cleanup_t * context);
 
 /*-------------------------------------------------------------------------*/
 static cleanup_t *
@@ -288,6 +284,16 @@ cleanup_reset (cleanup_t * context)
     if (context->ptable == NULL)
     {
         outofmemory("object cleanup pointertable");
+        return MY_FALSE;
+    }
+
+    context->mlist = NULL;
+    if (context->mtable)
+        free_pointer_table(context->mtable);
+    context->mtable = new_pointer_table();
+    if (context->ptable == NULL)
+    {
+        outofmemory("mapping compaction pointertable");
         return MY_FALSE;
     }
 
@@ -389,7 +395,7 @@ cleanup_closure (svalue_t *csvp, cleanup_t * context)
 } /* cleanup_closure() */
 
 /*-------------------------------------------------------------------------*/
-static void
+void
 cleanup_vector (svalue_t *svp, size_t num, cleanup_t * context)
 
 /* Cleanup the <num> svalues in vector/svalue block <svp>.
@@ -506,6 +512,8 @@ cleanup_vector (svalue_t *svp, size_t num, cleanup_t * context)
                 case LVALUE_UNPROTECTED:
                 case LVALUE_UNPROTECTED_CHAR:
                 case LVALUE_UNPROTECTED_RANGE:
+                case LVALUE_UNPROTECTED_MAPENTRY:
+                case LVALUE_UNPROTECTED_MAP_RANGE:
                     NOOP;
                     break;
 
@@ -536,6 +544,17 @@ cleanup_vector (svalue_t *svp, size_t num, cleanup_t * context)
                     map.u.map = e->map;
                     cleanup_vector(&map, 1, context);
                     cleanup_vector(&(e->key), 1, context);
+
+                    break;
+                }
+
+                case LVALUE_PROTECTED_MAP_RANGE:
+                {
+                    struct protected_map_range_lvalue *r = p->u.protected_map_range_lvalue;
+                    svalue_t map = { T_MAPPING, {}, {.map = r->map} };
+
+                    cleanup_vector(&map, 1, context);
+                    cleanup_vector(&(r->key), 1, context);
 
                     break;
                 }
@@ -649,6 +668,10 @@ cleanup_structures (cleanup_t * context)
                 cleanup_vector(&driver_hook[i], 1, context);
         }
     }
+
+#ifdef USE_PYTHON
+    cleanup_python_data(context);
+#endif
 } /* cleanup_structures() */
 
 /*-------------------------------------------------------------------------*/
@@ -876,12 +899,13 @@ cleanup_all_objects (void)
         object_t   * ob;
         for (ob = obj_list; ob; ob = ob->next_all)
         {
-            /* If the object is swapped for the cleanup, throw away
-             * the pointertable afterwards as the memory locations
-             * are no longer unique.
+            cleanup_single_object(ob, context);
+            cleanup_compact_mappings(context);
+
+            /* Reset the ptr table after each object
+             * to reduce memory usage.
              */
-            if ( cleanup_single_object(ob, context)
-             && !cleanup_reset(context))
+            if (!cleanup_reset(context))
             {
                 cleanup_free(context);
                 return;
@@ -1511,6 +1535,8 @@ clear_ref_in_vector (svalue_t *svp, size_t num)
                 case LVALUE_UNPROTECTED:
                 case LVALUE_UNPROTECTED_CHAR:
                 case LVALUE_UNPROTECTED_RANGE:
+                case LVALUE_UNPROTECTED_MAPENTRY:
+                case LVALUE_UNPROTECTED_MAP_RANGE:
                     NOOP;
                     break;
 
@@ -1561,6 +1587,21 @@ clear_ref_in_vector (svalue_t *svp, size_t num)
                     {
                         svalue_t map = { T_MAPPING };
                         map.u.map = lv->map;
+
+                        lv->ref = 0;
+
+                        clear_ref_in_vector(&(lv->key), 1);
+                        clear_ref_in_vector(&map, 1);
+                    }
+                    break;
+                }
+
+                case LVALUE_PROTECTED_MAP_RANGE:
+                {
+                    struct protected_map_range_lvalue *lv = p->u.protected_map_range_lvalue;
+                    if (lv->ref)
+                    {
+                        svalue_t map = { T_MAPPING, {}, {.map = lv->map} };
 
                         lv->ref = 0;
 
@@ -1699,6 +1740,8 @@ gc_count_ref_in_vector (svalue_t *svp, size_t num
                 case LVALUE_UNPROTECTED:
                 case LVALUE_UNPROTECTED_CHAR:
                 case LVALUE_UNPROTECTED_RANGE:
+                case LVALUE_UNPROTECTED_MAPENTRY:
+                case LVALUE_UNPROTECTED_MAP_RANGE:
                     NOOP;
                     break;
 
@@ -1767,6 +1810,25 @@ gc_count_ref_in_vector (svalue_t *svp, size_t num
                     {
                         svalue_t map = { T_MAPPING };
                         map.u.map = lv->map;
+
+#ifdef CHECK_OBJECT_GC_REF
+                        gc_count_ref_in_vector(&(lv->key), 1, file, line);
+                        gc_count_ref_in_vector(&map, 1, file, line);
+#else
+                        count_ref_in_vector(&(lv->key), 1);
+                        count_ref_in_vector(&map, 1);
+#endif
+                    }
+                    lv->ref++;
+                    break;
+                }
+
+                case LVALUE_PROTECTED_MAP_RANGE:
+                {
+                    struct protected_map_range_lvalue *lv = p->u.protected_map_range_lvalue;
+                    if (CHECK_REF(lv))
+                    {
+                        svalue_t map = { T_MAPPING, {}, {.map = lv->map} };
 
 #ifdef CHECK_OBJECT_GC_REF
                         gc_count_ref_in_vector(&(lv->key), 1, file, line);
@@ -2764,6 +2826,14 @@ show_object (int d, void *block, int depth)
 {
     object_t *ob;
 
+    if (is_freed(block, sizeof(object_t)))
+    {
+        WRITES(d, "Object in freed block 0x");
+        write_x(d, (p_uint)((void *)block - xalloc_overhead()));
+        WRITES(d, "\n");
+        return;
+    }
+
     ob = (object_t *)block;
     if (depth) {
         object_t *o;
@@ -2771,7 +2841,7 @@ show_object (int d, void *block, int depth)
         for (o = obj_list; o && o != ob; o = o->next_all) NOOP;
         if (!o || o->flags & O_DESTRUCTED) {
             WRITES(d, "Destructed object in block 0x");
-            write_x(d, (p_uint)((unsigned *)block - xalloc_overhead()));
+            write_x(d, (p_uint)((void *)block - xalloc_overhead()));
             WRITES(d, "\n");
             return;
         }
@@ -2789,6 +2859,24 @@ show_object (int d, void *block, int depth)
 
 /*-------------------------------------------------------------------------*/
 static void
+show_prog_name (int d, program_t *prog)
+
+/* Print the name of the program <prog> on filedescriptor <d>.
+ */
+
+{
+    if (!is_freed(prog, sizeof(program_t)) && prog->name)
+        show_mstring(d, prog->name, 0);
+    else
+    {
+        WRITES(d, "(freed program at 0x");
+        write_x(d, (p_uint)((void *)prog - xalloc_overhead()));
+        WRITES(d, ")");
+    }
+} /* show_prog_name() */
+
+/*-------------------------------------------------------------------------*/
+static void
 show_lwobject (int d, void *block, int depth)
 
 /* Print the data about lightweight object <block> on filedescriptor <d>.
@@ -2797,9 +2885,17 @@ show_lwobject (int d, void *block, int depth)
 {
     lwobject_t *lwob;
 
+    if (is_freed(block, sizeof(lwobject_t)))
+    {
+        WRITES(d, "Lightweight object in freed block 0x");
+        write_x(d, (p_uint)((void *)block - xalloc_overhead()));
+        WRITES(d, "\n");
+        return;
+    }
+
     lwob = (lwobject_t *)block;
     WRITES(d, "Lightweight object from ");
-    show_mstring(d, lwob->prog->name, 0);
+    show_prog_name(d, lwob->prog);
     WRITES(d, ", uid: ");
     show_string(d, lwob->user->name ? get_txt(lwob->user->name) : "0", 0);
     WRITES(d, "\n");
@@ -2815,15 +2911,23 @@ show_coroutine (int d, void *block, int depth)
 {
     coroutine_t *cr;
 
+    if (is_freed(block, sizeof(coroutine_t)))
+    {
+        WRITES(d, "Coroutine in freed block 0x");
+        write_x(d, (p_uint)((void *)block - xalloc_overhead()));
+        WRITES(d, "\n");
+        return;
+    }
+
     cr = (coroutine_t *)block;
-    if (cr->prog)
+    if (!cr->prog)
+        WRITES(d, "Finished coroutine\n");
+    else
     {
         WRITES(d, "Coroutine from ");
-        show_mstring(d, cr->prog->name, 0);
+        show_prog_name(d, cr->prog);
         WRITES(d, "\n");
     }
-    else
-        WRITES(d, "Finished coroutine\n");
 } /* show_coroutine() */
 
 /*-------------------------------------------------------------------------*/
@@ -2838,6 +2942,14 @@ show_cl_literal (int d, void *block, int depth UNUSED)
 #    pragma unused(depth)
 #endif
     lambda_t *l;
+
+    if (is_freed(block, sizeof(lambda_t)))
+    {
+        WRITES(d, "Closure literal in freed block 0x");
+        write_x(d, (p_uint)((void *)block - xalloc_overhead()));
+        WRITES(d, "\n");
+        return;
+    }
 
     l = (lambda_t *)block;
 
@@ -2860,8 +2972,8 @@ show_cl_literal (int d, void *block, int depth UNUSED)
         case T_LWOBJECT:
         {
             lwobject_t *lwob = l->ob.u.lwob;
-            if (lwob->prog && lwob->prog->name)
-                show_mstring(d, lwob->prog->name, 0);
+            if (!is_freed(lwob, sizeof(lwobject_t)))
+                show_prog_name(d, lwob->prog);
             else
                 WRITES(d, "(no name)");
             break;
@@ -2926,7 +3038,7 @@ show_array(int d, void *block, int depth)
               sizeof(vector_t) + sizeof(svalue_t) * a_size )
         {
             WRITES(d, "Array in freed block 0x");
-            write_x(d, (p_uint)((unsigned *)block - xalloc_overhead()));
+            write_x(d, (p_uint)((void *)block - xalloc_overhead()));
             WRITES(d, "\n");
             return;
         }
@@ -2974,7 +3086,7 @@ show_array(int d, void *block, int depth)
             if (is_freed(svp->u.str, 1) )
             {
                 WRITES(d, "String in freed block 0x");
-                write_x(d, (p_uint)((unsigned *)block - xalloc_overhead()));
+                write_x(d, (p_uint)((void *)block - xalloc_overhead()));
                 WRITES(d, "\n");
                 break;
             }
@@ -3049,7 +3161,7 @@ show_struct(int d, void *block, int depth)
         wiz_list_t *wl;
 
         wl = NULL;
-        freed = is_freed(block, sizeof(vector_t) );
+        freed = is_freed(block, sizeof(struct_t) );
         if (!freed)
         {
             user = a->user;
@@ -3062,7 +3174,7 @@ show_struct(int d, void *block, int depth)
               sizeof(struct_t) + sizeof(svalue_t) * (a_size - 1) )
         {
             WRITES(d, "struct in freed block 0x");
-            write_x(d, (p_uint)((unsigned *)block - xalloc_overhead()));
+            write_x(d, (p_uint)((void *)block - xalloc_overhead()));
             WRITES(d, "\n");
             return;
         }
@@ -3109,7 +3221,7 @@ show_struct(int d, void *block, int depth)
             if (is_freed(svp->u.str, 1) )
             {
                 WRITES(d, "String in freed block 0x");
-                write_x(d, (p_uint)((unsigned *)block - xalloc_overhead()));
+                write_x(d, (p_uint)((void *)block - xalloc_overhead()));
                 WRITES(d, "\n");
                 break;
             }

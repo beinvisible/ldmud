@@ -36,6 +36,8 @@ extern string_t * trim_all_spaces (const string_t * txt);
 extern char * xstrncpy(char * dest, const char * src, size_t num);
 extern size_t get_escaped_character(p_int c, char* buf, size_t buflen);
 
+extern size_t parse_input_encoding(string_t* encoding, bool* ignore, bool* replace);
+
 extern size_t byte_to_char_index(const char* text, size_t pos, bool* error);
 extern size_t char_to_byte_index(const char* text, size_t len, size_t pos, bool* error);
 extern bool is_ascii(const char* text, size_t len);
@@ -43,6 +45,7 @@ extern size_t utf8_size (p_int code);
 extern char* utf8_prev (char* text, size_t pos);
 extern size_t unicode_to_utf8(p_int code, char* buf);
 extern size_t utf8_to_unicode(const char* buf, size_t len, p_int *code);
+extern size_t get_string_up_to_size(const char* str, size_t len, size_t size, bool* error);
 
 extern char* get_illegal_sequence(char* buf, size_t len, iconv_t cd);
 

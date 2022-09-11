@@ -125,6 +125,7 @@ get_struct_type (struct_type_t* def)
         name->lpctype = type = lpctype_new();
         type->t_class = TCLASS_STRUCT;
         type->t_struct.name = ref_struct_name(name);
+        type->t_struct.def_idx = USHRT_MAX;
     }
 
     type->t_struct.def = def;
@@ -494,7 +495,7 @@ get_union_type (lpctype_t *head, lpctype_t* member)
     if (head == lpctype_mixed || member == lpctype_mixed)
         return lpctype_mixed;
 
-    if(member->t_class == TCLASS_UNION)
+    if (member->t_class == TCLASS_UNION)
     {
         next_member = member;
         result = ref_lpctype(head);
@@ -507,7 +508,7 @@ get_union_type (lpctype_t *head, lpctype_t* member)
 
             next_member = next_member->t_union.head;
         }
-        while(next_member->t_class == TCLASS_UNION);
+        while (next_member->t_class == TCLASS_UNION);
 
         insert = result;
         result = get_union_type(result, next_member);
@@ -516,6 +517,50 @@ get_union_type (lpctype_t *head, lpctype_t* member)
         return result;
     }
 
+    if (lpctype_contains(member, head))
+        return ref_lpctype(head);
+    else if (lpctype_contains(head, member))
+        return ref_lpctype(member);
+
+    if (head->t_class == TCLASS_UNION)
+    {
+        // Let's go over the members in head, and see if we can remove
+        // some of them because they might be contained in member.
+        lpctype_t *current = head;
+        while (true)
+        {
+            lpctype_t *elem = current->t_class == TCLASS_UNION ? current->t_union.member : current;
+
+            if (lpctype_contains(elem, member))
+            {
+                // Okay, build a union type without those inferior members.
+                result = ref_lpctype(member);
+
+                while (true)
+                {
+                    lpctype_t *insert_elem = insert->t_class == TCLASS_UNION ? insert->t_union.member : insert;
+
+                    if (!lpctype_contains(insert_elem, member))
+                    {
+                        lpctype_t *prev_result = result;
+                        result = get_union_type(result, insert_elem);
+                        free_lpctype(prev_result);
+                    }
+
+                    if (insert->t_class == TCLASS_UNION)
+                        insert = insert->t_union.head;
+                    else
+                        return result;
+                }
+                /* NOTREACHED */
+            }
+
+            if (current->t_class == TCLASS_UNION)
+                current = current->t_union.head;
+            else
+                break;
+        }
+    }
 
     while (insert->t_class == TCLASS_UNION && insert->t_union.member > member)
     {
@@ -631,6 +676,8 @@ internal_get_common_type(lpctype_t *t1, lpctype_t* t2, bool find_one)
 
     case TCLASS_OBJECT:
         if (t2->t_class != TCLASS_OBJECT)
+            return NULL;
+        else if (t1->t_object.type != t2->t_object.type)
             return NULL;
         else if (t1->t_object.program_name == NULL)
             return ref_lpctype(t2);
@@ -908,7 +955,8 @@ lpctype_contains (lpctype_t* src, lpctype_t* dest)
                 if (destbase->t_class == TCLASS_OBJECT)
                 {
                     if (srcbase == destbase
-                     || destbase->t_object.program_name == NULL) /* Matches any object */
+                     || (destbase->t_object.program_name == NULL  /* Matches any (lw)object */
+                      && destbase->t_object.type == srcbase->t_object.type))
                         found = true;
                 }
                 break;

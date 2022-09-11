@@ -208,6 +208,10 @@ Bool pragma_no_shadow;
   /* True: prevent the program from being shadowed.
    */
 
+bool pragma_no_simul_efuns;
+  /* True: Ignore simul-efuns.
+   */
+
 Bool pragma_pedantic;
   /* True: treat a number of sloppy language constructs as errors.
    */
@@ -768,7 +772,7 @@ init_lexer(void)
             /* NOTREACHED */
             continue;
         }
-        init_global_identifier(p, /* bVariable: */ MY_FALSE);
+        init_global_identifier(p, /* bProgram: */ false);
         p->u.global.efun = (short)n;
         p->next_all = all_efuns;
         all_efuns = p;
@@ -1176,6 +1180,20 @@ symbol_operator (const char *symbol, const char **endp)
  *   #'[<..   -> F_RX_RANGE
  *   #'[>..   -> F_AX_RANGE
  *   #'[,]    -> F_MAP_INDEX
+ *   #'[,<]   -> F_MAP_RINDEX
+ *   #'[,>]   -> F_MAP_AINDEX
+ *   #'[,..]  -> F_MAP_RANGE
+ *   #'[,..<] -> F_MAP_NR_RANGE
+ *   #'[,<..] -> F_MAP_RN_RANGE
+ *   #'[,<..<]-> F_MAP_RR_RANGE
+ *   #'[,..>] -> F_MAP_NA_RANGE
+ *   #'[,>..] -> F_MAP_AN_RANGE
+ *   #'[,<..>]-> F_MAP_RA_RANGE
+ *   #'[,>..<]-> F_MAP_AR_RANGE
+ *   #'[,>..>]-> F_MAP_AA_RANGE
+ *   #'[,..   -> F_MAP_NX_RANGE
+ *   #'[,<..  -> F_MAP_RX_RANGE
+ *   #'[,>..  -> F_MAP_AX_RANGE
  *   #'[      -> F_INDEX
  *   #'[<     -> F_RINDEX
  *   #'[>     -> F_AINDEX
@@ -1498,11 +1516,100 @@ symbol_operator (const char *symbol, const char **endp)
             ret = F_NX_RANGE;
             break;
         }
-        else if (c == ',' && symbol[1] == ']')
+        else if (c == ',')
         {
-            symbol++;
-            ret = F_MAP_INDEX;
-            break;
+            c = *++symbol;
+            if (c == ']')
+            {
+                ret = F_MAP_INDEX;
+                break;
+            }
+            else if (c == '<')
+            {
+                if (symbol[1] == '.' && symbol[2] == '.')
+                {
+                    c = *(symbol+=3);
+                    if (c == ']')
+                    {
+                        ret = F_MAP_RN_RANGE;
+                        break;
+                    }
+                    else if (c == '>' && symbol[1] == ']')
+                    {
+                        symbol++;
+                        ret = F_MAP_RA_RANGE;
+                        break;
+                    }
+                    else if (c == '<' && symbol[1] == ']')
+                    {
+                        symbol++;
+                        ret = F_MAP_RR_RANGE;
+                        break;
+                    }
+                    symbol--;
+                    ret = F_MAP_RX_RANGE;
+                    break;
+                }
+                else if (symbol[1] == ']')
+                {
+                    symbol++;
+                    ret = F_MAP_RINDEX;
+                    break;
+                }
+            }
+            else if (c == '>')
+            {
+                if (symbol[1] == '.' && symbol[2] == '.')
+                {
+                    c = *(symbol+=3);
+                    if (c == ']')
+                    {
+                        ret = F_MAP_AN_RANGE;
+                        break;
+                    }
+                    else if (c == '>' && symbol[1] == ']')
+                    {
+                        symbol++;
+                        ret = F_MAP_AA_RANGE;
+                        break;
+                    }
+                    else if (c == '<' && symbol[1] == ']')
+                    {
+                        symbol++;
+                        ret = F_MAP_AR_RANGE;
+                        break;
+                    }
+                    symbol--;
+                    ret = F_MAP_AX_RANGE;
+                    break;
+                }
+                else if (symbol[1] == ']')
+                {
+                    symbol++;
+                    ret = F_MAP_AINDEX;
+                    break;
+                }
+            }
+            else if (c == '.' && symbol[1] == '.')
+            {
+                c = *(symbol+=2);
+                if (c == ']') {
+                    ret = F_MAP_RANGE;
+                    break;
+                } else if (c == '>' && symbol[1] == ']') {
+                    symbol++;
+                    ret = F_MAP_NA_RANGE;
+                    break;
+                } else if (c == '<' && symbol[1] == ']') {
+                    symbol++;
+                    ret = F_MAP_NR_RANGE;
+                    break;
+                }
+                symbol--;
+                ret = F_MAP_NX_RANGE;
+                break;
+            }
+            symbol--;
         }
         symbol--;
         ret = F_INDEX;
@@ -1780,7 +1887,22 @@ undefined_function:
         /* Symbol is ok - create the closure value */
 
         sp->type = T_CLOSURE;
-        if (current_object.type == T_OBJECT)
+        if (efun_override != OVERRIDE_EFUN
+         && p->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER
+         && p->u.global.sim_efun > USHRT_MAX - CLOSURE_SIMUL_EFUN_OFFS)
+        {
+            /* Special handling for simul-efuns with too big indices.
+             * We'll create an lfun closure here.
+             */
+            int fx = find_function(p->name, simul_efun_object->prog);
+            if (fx == -1)
+                fatal("Can't find simul_efun %s", get_txt(p->name));
+
+            closure_lfun(sp, svalue_object(simul_efun_object), simul_efun_object->prog, fx, 0, true);
+            assign_current_object(&(sp->u.lambda->ob), "symbol_efun");
+            return;
+        }
+        else if (current_object.type == T_OBJECT)
         {
             sp->u.ob = ref_object(current_object.u.ob, "symbol_efun");
             sp->x.closure_type = 0;
@@ -1939,16 +2061,16 @@ cleanup_source_files (void)
 
 /*-------------------------------------------------------------------------*/
 void
-init_global_identifier (ident_t * ident, Bool bVariable)
+init_global_identifier (ident_t * ident, bool bProgram)
 
 /* The (newly created or to be reused) identifier <ident> is set up
  * to be a global identifier, with all the .global.* fields set to
  * a suitable default. The caller has to fill in the information specifying
  * what kind of global this is.
  *
- * <bVariable> is to be TRUE if the caller intends to use the identifier
- * for a (local or global) variable or lfun; and FALSE if it is for a
- * efun/sefun.
+ * <bProgram> is to be true if the caller intends to use the identifier
+ * for an identifier specific to an LPC program (variable, lfun or struct
+ * definition), and false if it is for a worldwide identifier (efun, sefun).
  *
  * The function is rather small, but having it here makes it easier to
  * guarantee that all fields are set to a proper default.
@@ -1957,13 +2079,14 @@ init_global_identifier (ident_t * ident, Bool bVariable)
 {
     ident->type = I_TYPE_GLOBAL;
     ident->u.global.function  = I_GLOBAL_FUNCTION_OTHER;
-    if (bVariable)
+    if (bProgram)
         ident->u.global.variable  = I_GLOBAL_VARIABLE_OTHER;
     else
-        ident->u.global.variable = I_GLOBAL_VARIABLE_FUN;
+        ident->u.global.variable = I_GLOBAL_VARIABLE_WORLDWIDE;
     ident->u.global.efun     = I_GLOBAL_EFUN_OTHER;
     ident->u.global.sim_efun = I_GLOBAL_SEFUN_OTHER;
     ident->u.global.struct_id = I_GLOBAL_STRUCT_NONE;
+    ident->u.global.sefun_struct_id = I_GLOBAL_SEFUN_STRUCT_NONE;
 #ifdef USE_PYTHON
     ident->u.global.python_efun = I_GLOBAL_PYTHON_EFUN_OTHER;
 #endif
@@ -2362,10 +2485,11 @@ set_input_source (int fd, const char* fname, string_t * str)
         else if (driver_hook[H_FILE_ENCODING].type == T_CLOSURE)
         {
             svalue_t *svp;
+            svalue_t master_sv = svalue_object(master_ob);
 
             /* Setup and call the closure */
             push_c_string(inter_sp, fname);
-            svp = secure_apply_lambda(driver_hook+H_FILE_ENCODING, 1);
+            svp = secure_apply_lambda_ob(driver_hook+H_FILE_ENCODING, 1, &master_sv);
 
             if (svp && svp->type == T_STRING)
                 encoding = svp->u.str;
@@ -3097,6 +3221,7 @@ add_auto_include (const char * obj_file, const char *cur_file, Bool sys_include)
     else if (driver_hook[H_AUTO_INCLUDE].type == T_CLOSURE)
     {
         svalue_t *svp;
+        svalue_t master_sv = svalue_object(master_ob);
 
         /* Setup and call the closure */
         push_c_string(inter_sp, obj_file);
@@ -3110,7 +3235,7 @@ add_auto_include (const char * obj_file, const char *cur_file, Bool sys_include)
             push_number(inter_sp, 0);
             push_number(inter_sp, 0);
         }
-        svp = secure_apply_lambda(driver_hook+H_AUTO_INCLUDE, 3);
+        svp = secure_apply_lambda_ob(driver_hook+H_AUTO_INCLUDE, 3, &master_sv);
         if (svp && svp->type == T_STRING)
         {
             auto_include_string = svp->u.str;
@@ -3445,13 +3570,12 @@ open_include_file (char *buf, char *name, mp_int namelen, char delim)
          */
 
         svalue_t *svp;
+        svalue_t master_sv = svalue_object(master_ob);
 
         /* Setup and call the closure */
         push_c_string(inter_sp, name);
         push_c_string(inter_sp, current_loc.file->name);
-        if (driver_hook[H_INCLUDE_DIRS].x.closure_type == CLOSURE_LAMBDA)
-            assign_current_object(&(driver_hook[H_INCLUDE_DIRS].u.lambda->ob), "open_include_file");
-        svp = secure_apply_lambda(&driver_hook[H_INCLUDE_DIRS], 2);
+        svp = secure_apply_lambda_ob(&driver_hook[H_INCLUDE_DIRS], 2, &master_sv);
 
         /* The result must be legal relative pathname */
         if (!svp || svp->type != T_STRING)
@@ -3992,6 +4116,33 @@ handle_pragma (char *str)
         else if (wordcmp(base, "no_shadow", namelen) == 0)
         {
             pragma_no_shadow = MY_TRUE;
+            validPragma = MY_TRUE;
+        }
+        else if (wordcmp(base, "no_simul_efuns", namelen) == 0)
+        {
+            /* Everything that is needed for the master to be loaded
+             * has permission to use this pragma.
+             */
+            if (master_ob && !(master_ob->flags & O_DESTRUCTED))
+            {
+                svalue_t *res;
+
+                push_ref_string(inter_sp, STR_PRAGMA_NO_SIMUL_EFUNS);
+                push_c_string(inter_sp, current_loc.file->name);
+                res = apply_master(STR_PRIVILEGE, 2);
+
+                if (!res || res->type != T_NUMBER || res->u.number < 0)
+                    lexerror("Privilege violation: pragma no_simul_efuns");
+                else if (res->u.number > 0)
+                    pragma_no_simul_efuns = true;
+            }
+            else
+                pragma_no_simul_efuns = true;
+            validPragma = MY_TRUE;
+        }
+        else if (wordcmp(base, "simul_efuns", namelen) == 0)
+        {
+            pragma_no_simul_efuns = false;
             validPragma = MY_TRUE;
         }
         else if (wordcmp(base, "pedantic", namelen) == 0)
@@ -4842,7 +4993,7 @@ closure (char *in_yyp)
         efun_override = OVERRIDE_EFUN;
         super_name = NULL;
     }
-    else if (super_name != NULL && !disable_sefuns && !strncmp(super_name, "sefun::", 7))
+    else if (super_name != NULL && !pragma_no_simul_efuns && !strncmp(super_name, "sefun::", 7))
     {
         efun_override = OVERRIDE_SEFUN;
         super_name = NULL;
@@ -4969,7 +5120,7 @@ closure (char *in_yyp)
       || is_python_efun(p)
 #endif
         )
-     && master_ob && !disable_sefuns
+     && master_ob && !pragma_no_simul_efuns
      && (!EVALUATION_TOO_LONG())
        )
     {
@@ -5030,7 +5181,7 @@ closure (char *in_yyp)
 
         /* simul-efun? */
         if ((efun_override == OVERRIDE_NONE || efun_override == OVERRIDE_SEFUN)
-         && p->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER && !disable_sefuns)
+         && p->u.global.sim_efun != I_GLOBAL_SEFUN_OTHER && !pragma_no_simul_efuns)
         {
             yylval.ident = p;
             return L_SIMUL_EFUN_CLOSURE;
@@ -5074,7 +5225,7 @@ closure (char *in_yyp)
         /* object variable? */
         if ((efun_override == OVERRIDE_NONE || efun_override == OVERRIDE_VAR)
          && p->u.global.variable != I_GLOBAL_VARIABLE_OTHER
-         && p->u.global.variable != I_GLOBAL_VARIABLE_FUN)
+         && p->u.global.variable != I_GLOBAL_VARIABLE_WORLDWIDE)
         {
             if (p->u.global.variable & VIRTUAL_VAR_TAG) {
                 /* Handling this would require an extra coding of
@@ -6358,6 +6509,7 @@ start_new_file (int fd, const char * fname)
     pragma_no_lightweight_set = false;
     pragma_no_inherit = MY_FALSE;
     pragma_no_shadow = MY_FALSE;
+    pragma_no_simul_efuns = false;
     pragma_pedantic = MY_FALSE;
     pragma_warn_missing_return = MY_TRUE;
     pragma_warn_dead_code = MY_FALSE;

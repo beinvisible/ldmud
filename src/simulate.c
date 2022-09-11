@@ -44,6 +44,7 @@
 #include "call_out.h"
 #include "closure.h"
 #include "comm.h"
+#include "coroutine.h"
 #include "ed.h"
 #include "filestat.h"
 #include "gcollect.h"
@@ -1520,17 +1521,13 @@ determine_uid (svalue_t ob, string_t* name, wiz_list_t **user, wiz_list_t **eff_
  */
 
 {
-    lambda_t *l;
     svalue_t *ret;
 
     *user = &default_wizlist_entry;  /* Default uid */
 
-    if ( NULL != (l = driver_hook[hook].u.lambda) )
+    if (driver_hook[hook].type == T_CLOSURE)
     {
-        if (driver_hook[hook].x.closure_type == CLOSURE_LAMBDA)
-            assign_object_svalue(&(l->ob), ob, "determine_uid");
-
-        call_lambda(&driver_hook[hook], numarg);
+        call_lambda_ob(&driver_hook[hook], numarg, &ob);
         ret = inter_sp;
 
         if (ret->type == T_STRING)
@@ -3294,6 +3291,10 @@ status_parse (strbuf_t * sbuf, char * buff)
                             , tot_alloc_object, tot_alloc_object_size
                             , num_destructed  
                             , num_vb_swapped, total_vb_bytes_swapped / 1024);
+            strbuf_addf(sbuf, "Lightweight Objects:\t\t%8ld %9ld\n"
+                            , num_lwobjects, total_lwobject_size);
+            strbuf_addf(sbuf, "Coroutines:\t\t\t%8ld %9ld\n"
+                            , num_coroutines, total_coroutine_size);
             strbuf_addf(sbuf, "Prog blocks:\t\t\t%8"PRIdMPINT" %9"PRIdMPINT
                               " (%"PRIdMPINT" swapped: %"PRIdMPINT" Kbytes)\n"
                             , total_num_prog_blocks + num_swapped - num_unswapped
@@ -3964,14 +3965,21 @@ setup_callback_args (callback_t *cb, int nargs, svalue_t * args)
 
 /*-------------------------------------------------------------------------*/
 int
-setup_function_callback ( callback_t *cb, svalue_t ob, string_t * fun
-                        , int nargs, svalue_t * args)
+setup_function_callback_base ( callback_t *cb, svalue_t ob, string_t * fun
+                             , int nargs, svalue_t * args, bool no_warn)
 
-/* Setup the empty/uninitialized callback <cb> to hold a function
+/* Aliases:
+ *   setup_function_callback(cb, ob, fun, nargs, args)
+ *         == setup_function_callback_base(cb, ob, fun, nargs, args, false)
+ *
+ * Setup the empty/uninitialized callback <cb> to hold a function
  * call to <ob>:<fun> with the <nargs> arguments starting from <args>.
  *
  * Both <ob> and <fun> are copied from the caller, but the arguments are
  * adopted (taken away from the caller).
+ *
+ * If function <fun> doesn't exist in <ob> and <no_warn> is not set,
+ * issue a runtime warning.
  *
  * Result is -1 on success, or, when encountering an illegal argument,
  * the index of the faulty argument (but even then all caller arguments
@@ -3993,7 +4001,7 @@ setup_function_callback ( callback_t *cb, svalue_t ob, string_t * fun
         cb->function.named.ob = const0;
         cb->function.named.name = NULL;
     }
-    else
+    else if (!no_warn)
     {
         /* Check whether the function does exist, */
         switch (ob.type)
@@ -4009,7 +4017,7 @@ setup_function_callback ( callback_t *cb, svalue_t ob, string_t * fun
     }
 
     return error_index;
-} /* setup_function_callback() */
+} /* setup_function_callback_base() */
 
 /*-------------------------------------------------------------------------*/
 int
@@ -4145,9 +4153,10 @@ setup_efun_callback_base ( callback_t **cb, svalue_t *args, int nargs
         if (ob.type != T_NUMBER)
         {
             memsafe(*cb = xalloc(sizeof(callback_t)), sizeof(callback_t), "callback structure");
-            error_index = setup_function_callback(*cb, ob, args[0].u.str
-                                                 , nargs-first_arg
-                                                 , args+first_arg);
+            error_index = setup_function_callback_base(*cb, ob, args[0].u.str
+                                                      , nargs-first_arg
+                                                      , args+first_arg
+                                                      , bNoObj);
             if (error_index >= 0)
                 error_index += first_arg;
         }
@@ -5162,22 +5171,19 @@ f_set_driver_hook (svalue_t *sp)
       }
 
     case T_CLOSURE:
-        if (sp->x.closure_type == CLOSURE_UNBOUND_LAMBDA
+        /* Even if the hook type map doesn't specify so, we allow
+         * unbound lambdas that we can take ownership of.
+         * (We need ownership, because those hooks will rebind
+         * the closure before call.)
+         */
+        if ((hook_type_map[n] & TF_CLOSURE) == 0
+         && sp->x.closure_type == CLOSURE_UNBOUND_LAMBDA
          && sp->u.lambda->ref == 1)
         {
             driver_hook[n] = *sp;
             driver_hook[n].x.closure_type = CLOSURE_LAMBDA;
             put_ref_object(&(driver_hook[n].u.lambda->ob), master_ob, "hook closure");
-            if (n == H_NOECHO)
-            {
-                mudlib_telopts();
-            }
             break;
-        }
-        else if (!CLOSURE_IS_LFUN(sp->x.closure_type))
-        {
-            errorf("Bad value for hook %"PRIdPINT": unbound lambda or "
-                  "lfun closure expected.\n", n);
         }
         /* FALLTHROUGH */
 

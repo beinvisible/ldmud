@@ -501,6 +501,41 @@ get_escaped_character (p_int c, char* buf, size_t buflen)
 /*--------------------------------------------------------------------*/
 
 size_t
+parse_input_encoding (string_t* encoding, bool* ignore, bool* replace)
+
+/* Parses the given encoding for any error handling suffixes.
+ * Sets <ignore> and <replace> to true if the corresponding suffixes
+ * ("//IGNORE" resp. "//REPLACE") were found, to false otherwise.
+ * Any unknown suffixes will be ignored. Returns the length of the
+ * encoding name without the (known) suffixes.
+ */
+
+{
+    const char *text = get_txt(encoding);
+    size_t len = mstrsize(encoding);
+
+    *ignore = false;
+    *replace = false;
+
+    /* Just check for the suffixes we know. */
+    if (len > 8 && strncasecmp(text + len - 8, "//IGNORE", 8) == 0)
+    {
+        *ignore = true;
+        return len - 8;
+    }
+
+    if (len > 9 && strncasecmp(text + len - 9, "//REPLACE", 9) == 0)
+    {
+        *replace = true;
+        return len - 9;
+    }
+
+    return len;
+} /* parse_input_encoding() */
+
+/*--------------------------------------------------------------------*/
+
+size_t
 byte_to_char_index (const char* text, size_t pos, bool* error)
 
 /* Determines the character index in the string <text> at the
@@ -768,6 +803,49 @@ utf8_to_unicode (const char* buf, size_t len, p_int *code)
 
     return 0; /* NOTREACHED. */
 } /* utf8_to_unicode() */
+
+/*--------------------------------------------------------------------*/
+
+size_t
+get_string_up_to_size (const char* str, size_t len, size_t size, bool* error)
+
+/* Determines the length (in bytes) for <str> that will not exceed
+ * the given size (in bytes). If there are errors in the encoding
+ * returns the length up to the faulty byte and sets the <error> flag
+ * (if not NULL).
+ */
+
+{
+    int result = 0;
+
+    if (len <= size)
+        return len;
+
+    while (len != 0)
+    {
+        p_int ch;
+        size_t clen = utf8_to_unicode(str, len, &ch);
+
+        if (!clen)
+        {
+            if (error)
+                *error = true;
+            return result;
+        }
+
+        if (clen > size)
+            break;
+
+        result += clen;
+        str += clen;
+        len -= clen;
+        size -= clen;
+    }
+
+    if (error)
+        *error = false;
+    return result;
+} /* get_string_up_to_size() */
 
 /*--------------------------------------------------------------------*/
 
@@ -1657,7 +1735,12 @@ v_to_text (svalue_t *sp, int num_arg)
         svalue_t* text = sp-1;
         string_t* result;
 
+        char*  encoding_name;
+        size_t encoding_len;
+
         iconv_t cd;
+        bool    ignore;
+        bool    replace;
 
         char*  in_buf_start;
         char*  in_buf_ptr;
@@ -1706,7 +1789,19 @@ v_to_text (svalue_t *sp, int num_arg)
         else
             errorf("Bad arg 1 to to_text(): unicode string and encoding given.\n");
 
-        cd = iconv_open("UTF-8", get_txt(sp->u.str));
+        encoding_len = parse_input_encoding(sp->u.str, &ignore, &replace);
+        encoding_name = get_txt(sp->u.str);
+        if (encoding_len < mstrsize(sp->u.str))
+        {
+            char save = encoding_name[encoding_len];
+
+            encoding_name[encoding_len] = 0;
+            cd = iconv_open("UTF-8", encoding_name);
+            encoding_name[encoding_len] = save;
+        }
+        else
+            cd = iconv_open("UTF-8", encoding_name);
+
         if (!iconv_valid(cd))
         {
             if (errno == EINVAL)
@@ -1748,6 +1843,40 @@ v_to_text (svalue_t *sp, int num_arg)
             if (rc == (size_t)-1)
             {
                 size_t idx;
+                if ((errno == EILSEQ || errno == EINVAL) && (ignore || replace))
+                {
+                    /* Handle encoding errors ourselves. */
+                    if (ignore)
+                    {
+                        if (at_end)
+                            break;
+
+                        in_buf_ptr++;
+                        in_buf_left--;
+                        continue;
+                    }
+
+                    if (replace)
+                    {
+                        /* Add the (3 bytes) replacement char. */
+                        if (out_buf_left < 3)
+                            errno = E2BIG;
+                        else
+                        {
+                            memcpy(out_buf_ptr, "\xef\xbf\xbd", 3);
+                            out_buf_ptr += 3;
+                            out_buf_left -= 3;
+
+                            if (at_end)
+                                break;
+
+                            in_buf_ptr++;
+                            in_buf_left--;
+                            continue;
+                        }
+                    }
+                }
+
                 if (errno == E2BIG)
                 {
                     /* Reallocate output buffer */
