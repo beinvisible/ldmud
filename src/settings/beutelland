@@ -41,6 +41,10 @@ enable_eval_cost_trace=yes
 enable_use_parse_command=no
 enable_use_process_string=no
 enable_use_pcre=no
+enable_use_mccp=yes
+with_erq_dir=/RoleMUD/bin
+with_swap_file=Swap_File
+enable_use_json=yes
 
 # --- Wizlist ---
 with_wizlist_file=no
