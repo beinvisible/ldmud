@@ -29,6 +29,8 @@ with_max_user_trace=60
 with_portno=5678
 with_udp_port=4246
 enable_use_mccp=yes
+enable_use_json=yes
+enable_use_tls=yes
 
 # --- ERQ ---
 enable_erq=xerq
