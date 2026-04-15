@@ -2763,33 +2763,50 @@ get_message (char *buff, size_t *bufflength)
                                         proto, src_ip, dst_ip,
                                         &src_port, &dst_port) == 5)
                                     {
+                                        if (strcmp(proto, "TCP4") == 0)
+                                        {
+                                            struct in_addr real4;
+                                            if (inet_aton(src_ip, &real4)) {
 #ifdef USE_IPV6
-                                        struct in6_addr real6;
-                                        struct in_addr  real4;
-                                        if (inet_pton(AF_INET6, src_ip,
-                                                      &real6) == 1) {
-                                            addr.sin6_addr = real6;
-                                            addr.sin6_port =
-                                                htons((unsigned short)src_port);
-                                        } else if (inet_pton(AF_INET, src_ip,
-                                                             &real4) == 1) {
-                                            /* map IPv4 to IPv6-mapped */
-                                            memset(&addr.sin6_addr, 0, 10);
-                                            memset((char*)&addr.sin6_addr+10,
-                                                   0xff, 2);
-                                            memcpy((char*)&addr.sin6_addr+12,
-                                                   &real4, 4);
-                                            addr.sin6_port =
-                                                htons((unsigned short)src_port);
+                                                /* map IPv4 to IPv6-mapped */
+                                                memset(&addr.sin6_addr, 0, 10);
+                                                memset((char*)&addr.sin6_addr+10,
+                                                       0xff, 2);
+                                                memcpy((char*)&addr.sin6_addr+12,
+                                                       &real4, 4);
+                                                addr.sin6_port =
+                                                    htons((unsigned short)src_port);
+#else
+                                                addr.sin_addr = real4;
+                                                addr.sin_port =
+                                                    htons((unsigned short)src_port);
+#endif
+                                            }
+                                        }
+#ifdef USE_IPV6
+                                        else if (strcmp(proto, "TCP6") == 0)
+                                        {
+                                            struct in6_addr real6;
+                                            if (inet_pton(AF_INET6, src_ip,
+                                                          &real6) == 1) {
+                                                addr.sin6_addr = real6;
+                                                addr.sin6_port =
+                                                    htons((unsigned short)src_port);
+                                            }
                                         }
 #else
-                                        struct in_addr real_addr;
-                                        if (inet_aton(src_ip, &real_addr)) {
-                                            addr.sin_addr = real_addr;
-                                            addr.sin_port =
-                                                htons((unsigned short)src_port);
+                                        else if (strcmp(proto, "TCP6") == 0)
+                                        {
+                                            debug_message(
+                                                "%s PROXY protocol: received "
+                                                "TCP6 address %s but driver "
+                                                "was compiled without IPv6 "
+                                                "support, ignoring.\n",
+                                                time_stamp(), src_ip);
                                         }
 #endif
+                                        /* else: unknown proto, drop
+                                         * (invalid header per spec) */
                                     }
                                 }
                             }
