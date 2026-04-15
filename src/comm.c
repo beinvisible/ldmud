@@ -2748,7 +2748,8 @@ get_message (char *buff, size_t *bufflength)
                             {
                                 char *end = (char *)memchr(
                                     proxy_buf, '\n', n);
-                                if (end) {
+                                if (end && end > proxy_buf
+                                    && *(end - 1) == '\r') {
                                     int hdr_len = (int)(end - proxy_buf) + 1;
                                     char proto[6], src_ip[46], dst_ip[46];
                                     int src_port, dst_port;
