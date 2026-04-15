@@ -2727,9 +2727,76 @@ get_message (char *buff, size_t *bufflength)
                     length = sizeof addr;
                     new_socket = accept(sos[i], (struct sockaddr *)&addr
                                               , &length);
-                    if ((int)new_socket != -1)
+                    if ((int)new_socket != -1) {
+#ifdef SUPPORT_PROXY_PROTOCOL
+                        /* PROXY protocol v1 support.
+                         * If the first bytes on the connection are "PROXY ",
+                         * read the header line and replace the stored client
+                         * address with the real one.
+                         * Format: "PROXY TCP4 <src> <dst> <sport> <dport>\r\n"
+                         * If no PROXY header, proceed normally (backwards
+                         * compatible with direct connections).
+                         */
+                        {
+                            char proxy_buf[108];
+                            int n;
+
+                            n = recv(new_socket, proxy_buf,
+                                     sizeof(proxy_buf) - 1, MSG_PEEK);
+                            if (n >= 6
+                                && memcmp(proxy_buf, "PROXY ", 6) == 0)
+                            {
+                                char *end = (char *)memchr(
+                                    proxy_buf, '\n', n);
+                                if (end) {
+                                    int hdr_len = (int)(end - proxy_buf) + 1;
+                                    char proto[6], src_ip[46], dst_ip[46];
+                                    int src_port, dst_port;
+
+                                    /* consume from the socket */
+                                    recv(new_socket, proxy_buf, hdr_len, 0);
+                                    proxy_buf[hdr_len] = '\0';
+
+                                    if (sscanf(proxy_buf,
+                                        "PROXY %5s %45s %45s %d %d",
+                                        proto, src_ip, dst_ip,
+                                        &src_port, &dst_port) == 5)
+                                    {
+#ifdef USE_IPV6
+                                        struct in6_addr real6;
+                                        struct in_addr  real4;
+                                        if (inet_pton(AF_INET6, src_ip,
+                                                      &real6) == 1) {
+                                            addr.sin6_addr = real6;
+                                            addr.sin6_port =
+                                                htons((unsigned short)src_port);
+                                        } else if (inet_pton(AF_INET, src_ip,
+                                                             &real4) == 1) {
+                                            /* map IPv4 to IPv6-mapped */
+                                            memset(&addr.sin6_addr, 0, 10);
+                                            memset((char*)&addr.sin6_addr+10,
+                                                   0xff, 2);
+                                            memcpy((char*)&addr.sin6_addr+12,
+                                                   &real4, 4);
+                                            addr.sin6_port =
+                                                htons((unsigned short)src_port);
+                                        }
+#else
+                                        struct in_addr real_addr;
+                                        if (inet_aton(src_ip, &real_addr)) {
+                                            addr.sin_addr = real_addr;
+                                            addr.sin_port =
+                                                htons((unsigned short)src_port);
+                                        }
+#endif
+                                    }
+                                }
+                            }
+                        }
+#endif /* SUPPORT_PROXY_PROTOCOL */
                         new_player( NULL, new_socket, &addr, (size_t)length
                                   , port_numbers[i].port);
+                    }
                     else if ((int)new_socket == -1
                       && errno != EWOULDBLOCK && errno != EINTR
                       && errno != EAGAIN && errno != EPROTO )
