@@ -3314,7 +3314,7 @@ v_terminal_colour (svalue_t *sp, int num_arg)
  *
  *   varargs string terminal_colour( string str, mapping|closure map,
  *                                   [int wrap, int indent,]
- *                                   string delimiter, int code_len )
+ *                                   string delimiter, string|int end_delimiter )
  *
  * Expands all colour-defines from the input-string and replaces them by the
  * apropriate values found for the color-key inside the given mapping. The
@@ -3334,6 +3334,9 @@ v_terminal_colour (svalue_t *sp, int num_arg)
  * then the str will be linewrapped at the column given with wrap.  If indent
  * is given too, then all wrapped lines will be indented with the number of
  * blanks specified with indent.
+ *
+ * <delimiter> and <end_delimiter> can be used to modify the matching of
+ * colour keys. See manpage for details.
  *
  * The wrapper itself ignores the length of the color macros and that what
  * they contain, it wraps the string based on the length of the other chars
