@@ -99,8 +99,14 @@ EXAMPLES
         calling "players/alfe/c"->bar() will now result in the output
         "B via b". The 'private' function b::foo() has now become the
         default within "b".
+
         Consequently a call to "players/alfe/c"->foo() now prints
         "AB via b C".
+
+        Furthermore: without the 'private' modifier this last call
+        would result in an endless recursion, as b::bar() would then
+        call the topmost function c::foo(), which in turn calls b::bar,
+        and so on.
 
 SEE ALSO
         modifiers(LPC), inheritance(C), functions(LPC)
