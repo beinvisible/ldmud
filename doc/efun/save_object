@@ -13,7 +13,8 @@ DESCRIPTION
 
         The write will be performed in an 'atomic' way, i.e. the file will
         be written as "<name>.o.tmp" first, and only if that succeeds it will
-        be ranamed to "<name>.o".
+        be ranamed to "<name>.o". If "<name>.o.tmp" happens to exist, it is
+        overwritten!
 
         The efun save_object() returns 0 if the save file could be written
         successfuly, otherwise it returns a non-zero value if a non-fatal

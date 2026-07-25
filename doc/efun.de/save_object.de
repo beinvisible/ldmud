@@ -15,7 +15,8 @@ BESCHREIBUNG
 
         Das Schreiben der Datei geschieht 'atomar', d.h. die Datei wird zuerst
         als "<name>.o.tmp" geschrieben und erst nach dem Abschluss des
-        Schreibvorgangs auf "<name>.o" umbenannt.
+        Schreibvorgangs auf "<name>.o" umbenannt. Sollte die Datei
+        "<name>.o.tmp" bereits exitieren wird sie dabei überschrieben!
 
         Die Efun save_object() liefert 0, wenn die Speicherdatei erfolgreich
         erstellt wurde, sonst eine Zahl ungleich 0, wenn ein nicht
